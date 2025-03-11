@@ -79,8 +79,6 @@ def overlay_with_transform(background_path, overlay_path, output_path):
 
     cv2.imwrite(output_path, result)
 
-
-# Example usage
 if __name__ == "__main__":
     for i in range(10):
         overlay_with_transform(
