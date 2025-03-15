@@ -17,7 +17,7 @@ def chain_affine_transformation_mats(M0, M1):
     return M
 
 def point_position(point, M, x_dim, y_dim):
-    return x_dim/(M[0][0] * point[0] + M[0][1] * point[1] + M[0][2]), y_dim/(M[1][0] * point[0] + M[1][1] * point[1] + M[1][2])
+    return [(M[0][0] * point[0] + M[0][1] * point[1] + M[0][2])/x_dim, (M[1][0] * point[0] + M[1][1] * point[1] + M[1][2])/y_dim]
 
 
 def overlay_with_transform(background_path, overlay_path, output_path):
@@ -38,7 +38,7 @@ def overlay_with_transform(background_path, overlay_path, output_path):
         max_h = h_background
         max_w = int(max_h//1.4)
 
-    scale = random.uniform(0.4, 0.5)
+    scale = random.uniform(0.4, 0.6)
 
     max_w = int(max_w * scale)
     max_h = int(max_h * scale)
@@ -80,14 +80,25 @@ def overlay_with_transform(background_path, overlay_path, output_path):
         result[:, :, c] = (1 - alpha_3channel[:, :, c]) * background[:, :, c] + \
                           alpha_3channel[:, :, c] * dst[:, :, c]
 
-    print(point_position(tr, M, w_background, h_background))
-    cv2.imwrite(output_path, result)
+    cv2.imwrite(output_path + ".jpg", result)
+    points = point_position(tl, M, w_background, h_background) + point_position(tr, M, w_background, h_background) + point_position(br, M, w_background, h_background) + point_position(bl, M, w_background, h_background)
+    with open(output_path + ".txt", "a") as text:
+        text.write("0 ")
+        for p in points:
+            text.write("%.3f " % p)
+        text.write('\n')
+
 
 if __name__ == "__main__":
     images = os.listdir("./training_data/background")
-    for i in range(1):
+    cards = os.listdir("./images")
+    idx = 0
+    for i in images:
         overlay_with_transform(
-            "./training_data/background/"+random.choice(images),
-            "./images/"+random.choice(os.listdir("./images")),
-            "./training_data/gen/%s.jpg" % i
+            "./training_data/background/"+i,
+            "./images/"+random.choice(cards),
+            "./training_data/gen/%s" % idx
         )
+        idx+=1
+        if idx >= 20:
+            break
