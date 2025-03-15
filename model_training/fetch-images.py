@@ -20,7 +20,6 @@ def fetch_csv():
         for row in groupreader:
             fetch_set(row[0])
 
-
 def fetch_image(card_id):
     if not os.path.isfile("./images/% s.jpg" % card_id):
         try:
@@ -47,7 +46,6 @@ def fetch_images():
                         ids.append(card[0])
                 with Pool(30) as p:
                     p.map(fetch_image, ids)
-
 
 if __name__ == "__main__":
     fetch_images()

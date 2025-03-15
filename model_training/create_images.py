@@ -16,6 +16,10 @@ def chain_affine_transformation_mats(M0, M1):
     M = T[0:2, :]  # Remove the last row from T (the last row of affine transformations is always [0, 0, 1] and OpenCV conversion is omitting the last row).
     return M
 
+def point_position(point, M, x_dim, y_dim):
+    return x_dim/(M[0][0] * point[0] + M[0][1] * point[1] + M[0][2]), y_dim/(M[1][0] * point[0] + M[1][1] * point[1] + M[1][2])
+
+
 def overlay_with_transform(background_path, overlay_path, output_path):
     background = cv2.imread(background_path)
     overlay_img = cv2.imread(overlay_path, cv2.IMREAD_UNCHANGED)
@@ -39,10 +43,10 @@ def overlay_with_transform(background_path, overlay_path, output_path):
     max_w = int(max_w * scale)
     max_h = int(max_h * scale)
 
-    tl = [random.randint(0, max_w//3), random.randint(0, max_h//3)]
-    tr = [random.randint(max_w*2//3, max_w), random.randint(0, max_h//3)]
-    bl = [random.randint(0, max_w//3), random.randint(max_h*2//3, max_h)]
-    br = [random.randint(max_w*2//3, max_w), random.randint(max_h*2//3, max_h)]
+    tl = (random.randint(0, max_w//3), random.randint(0, max_h//3))
+    tr = (random.randint(max_w*2//3, max_w), random.randint(0, max_h//3))
+    bl = (random.randint(0, max_w//3), random.randint(max_h*2//3, max_h))
+    br = (random.randint(max_w*2//3, max_w), random.randint(max_h*2//3, max_h))
     pts1 = np.float32([[0, 0], [w_overlay, 0], [0, h_overlay], [w_overlay, h_overlay]])
     pts2 = np.float32([tl, tr, bl, br])
 
@@ -76,13 +80,14 @@ def overlay_with_transform(background_path, overlay_path, output_path):
         result[:, :, c] = (1 - alpha_3channel[:, :, c]) * background[:, :, c] + \
                           alpha_3channel[:, :, c] * dst[:, :, c]
 
-
+    print(point_position(tr, M, w_background, h_background))
     cv2.imwrite(output_path, result)
 
 if __name__ == "__main__":
-    for i in range(10):
+    images = os.listdir("./training_data/background")
+    for i in range(1):
         overlay_with_transform(
-            "./training_data/background/"+random.choice(os.listdir("./training_data/background")),
+            "./training_data/background/"+random.choice(images),
             "./images/"+random.choice(os.listdir("./images")),
             "./training_data/gen/%s.jpg" % i
         )
