@@ -1,6 +1,7 @@
 import numpy as np
 import os, random, cv2
 import math
+from multiprocessing import Pool
 
 # from https://stackoverflow.com/a/75391691
 def chain_affine_transformation_mats(M0, M1):
@@ -20,7 +21,10 @@ def point_position(point, M, x_dim, y_dim):
     return [(M[0][0] * point[0] + M[0][1] * point[1] + M[0][2])/x_dim, (M[1][0] * point[0] + M[1][1] * point[1] + M[1][2])/y_dim]
 
 
-def overlay_with_transform(background_path, overlay_path, output_path):
+def overlay_with_transform(vals):
+    background_path = vals[0]
+    overlay_path = vals[1]
+    output_path = vals[2]
     background = cv2.imread(background_path)
     overlay_img = cv2.imread(overlay_path, cv2.IMREAD_UNCHANGED)
 
@@ -87,18 +91,21 @@ def overlay_with_transform(background_path, overlay_path, output_path):
         for p in points:
             text.write("%.3f " % p)
         text.write('\n')
+    print(background_path)
 
 
 if __name__ == "__main__":
-    images = os.listdir("./training_data/background")
+    images = os.listdir("training_data/train_background")
     cards = os.listdir("./images")
     idx = 0
+    todo = []
     for i in images:
-        overlay_with_transform(
-            "./training_data/background/"+i,
+        todo.append((
+            "./training_data/train_background/"+i,
             "./images/"+random.choice(cards),
-            "./training_data/gen/%s" % idx
+            "./training_data/train/%s" % idx)
         )
         idx+=1
-        if idx >= 20:
-            break
+    print("starting")
+    with Pool(12) as p:
+        p.map(overlay_with_transform, todo)

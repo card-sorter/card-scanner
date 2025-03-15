@@ -1,0 +1,7 @@
+path: C://training_data
+train: train
+val: val
+
+nc: 1
+names:
+  0: card
