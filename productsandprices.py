@@ -33,7 +33,7 @@ def read_csv(csv_file):
             raise ValueError("CSV file is empty or has no headers!")
 
         for col_name, sample_value in zip(columns, sample_data):
-            inferred_type = infer_data_type(sample_value) if sample_value else "VARCHAR(255)"
+            inferred_type = infer_data_type(sample_value)
             col_def.append(f"{col_name} {inferred_type}")
     
     return col_def
@@ -66,11 +66,10 @@ def infer_data_type(value):
     value = value.strip()
     if value.isdigit():
         return "INT"
-
     if re.fullmatch(r"-?\d+\.\d+", value):
         return "DECIMAL(10,2)"
-
-    return "TEXT" if len(value) > 255 else "VARCHAR(255)"
+    else: 
+        return "VARCHAR(255)"
 
 def main():
     CSV_FILE = "######" #CSV File that has all the pokemon card data 
