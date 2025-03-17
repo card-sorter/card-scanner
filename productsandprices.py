@@ -51,13 +51,6 @@ def csv_to_mysql(mydb, csv_file, table_name):
         LINES TERMINATED BY '\n'
         IGNORE 1 ROWS;
         """)
-        cursor.execute("""
-            DELETE FROM PokemonCards
-            WHERE extRarity IS NULL 
-            OR extRarity = ''
-            OR extRarity = 'Code Card'
-            OR subTypeName = 'Reverse Holofoil'
-        """)
         mydb.commit()
 
     print("Data imported successfully with filters applied")
