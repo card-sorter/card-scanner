@@ -1,6 +1,5 @@
-import csv
+import csv,re
 import mysql.connector
-import pandas as pd
 
 username = "########"  # Your mysql username
 password = "########"  # Your mysql password
@@ -16,115 +15,85 @@ def create_db_connection():
     )
     return mydb
 
-def create_tables(mydb):
+def create_tables(mydb, table_name, col_def):
     with mydb.cursor() as cursor:
-        cursor.execute('DROP TABLE IF EXISTS PokemonCards')
-        cursor.execute("""
-            CREATE TABLE PokemonCards (
-                productId INT,
-                name VARCHAR(255),
-                cleanName VARCHAR(255),
-                imageUrl VARCHAR(255),
-                categoryId INT,
-                groupId INT,
-                url VARCHAR(255),
-                modifiedOn VARCHAR(255),
-                imageCount INT,
-                extNumber VARCHAR(255),
-                extRarity VARCHAR(255),
-                extCardType VARCHAR(255),
-                extHP INT,
-                extStage VARCHAR(255),
-                extAttack1 VARCHAR(255),
-                extAttack2 VARCHAR(255),
-                extWeakness VARCHAR(255),
-                extRetreatCost INT,
-                lowPrice DECIMAL(10,2),
-                midPrice DECIMAL(10,2),
-                highPrice DECIMAL(10,2),
-                marketPrice DECIMAL(10,2),
-                directLowPrice DECIMAL(10,2),
-                subTypeName VARCHAR(255),
-                extResistance VARCHAR(255),
-                extCardText TEXT,
-                extUPC VARCHAR(255)
-            )
-        """)
+        cursor.execute(f"DROP TABLE IF EXISTS {table_name}")
+        cursor.execute(f"CREATE TABLE {table_name} ({', '.join(col_def)});") 
         mydb.commit()
 
-def csv_to_mysql(mydb, csv_file):
+def read_csv(csv_file):
+    col_def = []
+    
+    with open(csv_file, newline='', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        columns = next(reader, None)  
+        sample_data = next(reader, [])  
+
+        if not columns:
+            raise ValueError("CSV file is empty or has no headers!")
+
+        for col_name, sample_value in zip(columns, sample_data):
+            inferred_type = infer_data_type(sample_value) if sample_value else "VARCHAR(255)"
+            col_def.append(f"{col_name} {inferred_type}")
+    
+    return col_def
+
+def csv_to_mysql(mydb, csv_file, table_name):
+    column_definitions = read_csv(csv_file)
+    create_tables(mydb, table_name, column_definitions)  
+
     with mydb.cursor() as cursor:
         cursor.execute(f"""
-            LOAD DATA LOCAL INFILE '{csv_file}'
-            INTO TABLE PokemonCards
-            FIELDS TERMINATED BY ','
-            ENCLOSED BY '"'
-            LINES TERMINATED BY '\n'
-            IGNORE 1 ROWS
-            (productId,
-            name,
-            cleanName,
-            imageUrl,
-            categoryId,
-            groupId,
-            url,
-            modifiedOn,
-            imageCount,
-            extNumber,
-            extRarity,
-            extCardType,
-            extHP,
-            extStage,
-            extAttack1,
-            extAttack2,
-            extWeakness,
-            extRetreatCost,
-            lowPrice,
-            midPrice,
-            highPrice,
-            marketPrice,
-            directLowPrice,
-            subTypeName,
-            extResistance,
-            extCardText,
-            extUPC)
+        LOAD DATA LOCAL INFILE '{csv_file}'
+        INTO TABLE {table_name}
+        FIELDS TERMINATED BY ',' 
+        ENCLOSED BY '"'
+        LINES TERMINATED BY '\n'
+        IGNORE 1 ROWS;
         """)
-
         cursor.execute("""
-                    DELETE FROM PokemonCards
-                    WHERE extRarity IS NULL 
-                    OR extRarity = ''
-                    OR extRarity = 'Code Card'
-                    OR subTypeName = 'Reverse Holofoil'
-                """)
-
+            DELETE FROM PokemonCards
+            WHERE extRarity IS NULL 
+            OR extRarity = ''
+            OR extRarity = 'Code Card'
+            OR subTypeName = 'Reverse Holofoil'
+        """)
         mydb.commit()
-        print("Data imported successfully with filters applied")
 
-def get_row_count(mydb):
+    print("Data imported successfully with filters applied")
+
+def get_row_count(mydb, table_name):
     with mydb.cursor() as cursor:
-        cursor.execute("SELECT COUNT(*) FROM PokemonCards")
+        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
         row_count = cursor.fetchone()[0]
-        print(f"Total rows in PokemonCards table: {row_count}")
+        print(f"Total rows in {table_name} table: {row_count}")
         return row_count
+
+def infer_data_type(value):
+    value = value.strip()
+    if value.isdigit():
+        return "INT"
+
+    if re.fullmatch(r"-?\d+\.\d+", value):
+        return "DECIMAL(10,2)"
+
+    return "TEXT" if len(value) > 255 else "VARCHAR(255)"
 
 def main():
     CSV_FILE = "######" #CSV File that has all the pokemon card data 
+    csv_tablename = "PokemonCards"
     
     mydb = create_db_connection()
-    if mydb or mydb.is_connected():
+    if mydb.is_connected():
         print("Database connection established successfully ( ˶ˆᗜˆ˵ )")
-        create_tables(mydb)
-        print(f"PokemonCards tables created successfully")
-        csv_to_mysql(mydb, CSV_FILE)
+        print(f"Creating table '{csv_tablename}'...")
+        csv_to_mysql(mydb, CSV_FILE, csv_tablename)
         print(f"'{CSV_FILE}' successfully imported into MySQL")
-        get_row_count(mydb)
+        get_row_count(mydb, csv_tablename)
         
-        if mydb.is_connected():
-            mydb.close()
-            print("Database connection closed (×_×)")
+        mydb.close()
+        print("Database connection closed (×_×)")
     else: 
         print("Failed to establish database connection (｡•́︿•̀｡)")
-        return
 if __name__ == "__main__":
     main()
