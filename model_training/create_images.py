@@ -46,12 +46,17 @@ def overlay_with_transform(background, overlay_img, text):
     max_w = int(max_w * scale)
     max_h = int(max_h * scale)
 
-    tl = (random.randint(0, max_w//4), random.randint(0, max_h//4))
-    tr = (random.randint(max_w*3//4, max_w), random.randint(0, max_h//4))
-    bl = (random.randint(0, max_w//4), random.randint(max_h*3//4, max_h))
-    br = (random.randint(max_w*3//4, max_w), random.randint(max_h*3//4, max_h))
-    pts1 = np.float32([[0, 0], [w_overlay, 0], [0, h_overlay], [w_overlay, h_overlay]])
-    pts2 = np.float32([tl, tr, bl, br])
+    if random.randrange(1, 10) < 7:
+        tl = (random.randint(0, max_w//4), random.randint(0, max_h//4))
+        tr = (random.randint(max_w*3//4, max_w), random.randint(0, max_h//4))
+        bl = (random.randint(0, max_w//4), random.randint(max_h*3//4, max_h))
+        br = (random.randint(max_w*3//4, max_w), random.randint(max_h*3//4, max_h))
+        pts1 = np.float32([[0, 0], [w_overlay, 0], [0, h_overlay], [w_overlay, h_overlay]])
+
+    else:
+        tl, tr, bl, br = (0, 0), (max_w, 0), (0, max_h), (max_w, max_h)
+        pts1 = np.float32([(0, 0), (w_overlay, 0), (0, h_overlay), (w_overlay, h_overlay)])
+
 
     extents = [[min(tl[0], bl[0]), min(tl[1], tr[1])],
                [max(tr[0], br[0]), max(bl[1], br[1])]]
@@ -64,6 +69,7 @@ def overlay_with_transform(background, overlay_img, text):
     x_loc = random.randint(radius, w_background-radius)-center[0]
     y_loc = random.randint(radius, h_background-radius)-center[1]
 
+    pts2 = np.float32([tl, tr, bl, br])
 
     M = cv2.getPerspectiveTransform(pts1, pts2)
 
