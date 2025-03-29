@@ -6,7 +6,7 @@ import tqdm
 
 images = os.listdir("C:/large_dataset/background_training")
 cards = os.listdir("./images")
-output = "C:/large_dataset/train/"
+output = "C:/large_dataset/train2/"
 
 # from https://stackoverflow.com/a/75391691
 def chain_affine_transformation_mats(M0, M1):
@@ -97,54 +97,81 @@ def overlay_with_transform(background, overlay_img, text):
     text.write('\n')
     return result
 
-def overlay2(background, overlay_img, text):
+def overlay2(background, overlay_img, text, num):
     if overlay_img.shape[2] == 3:
         overlay_img = cv2.cvtColor(overlay_img, cv2.COLOR_BGR2BGRA)
         overlay_img[:, :, 3] = 255
     h_background, w_background = background.shape[:2]
     h_overlay, w_overlay = overlay_img.shape[:2]
+
+    #flip image half the time
+    if random.getrandbits(1):
+        overlay_img = overlay_img[::-1, ::-1]
+
+    #Apply random perspective
     M = np.identity(3)
-    angle = random.randint(0, 360)
-    distance = random.randint(200, 1000)
+    angle = random.uniform(0, math.pi/2)
+    distance = random.uniform(0.0012, 0.00006)
     lx = math.cos(angle)*distance
     ly = math.sin(angle)*distance
-    M[2][0], M[2][1] = -0.00004, 0.0005
-    pts = np.array([[[w_overlay, h_overlay]]], dtype='float32')
-    tr_br = cv2.perspectiveTransform(pts, M)[0][0]
-    print(tr_br)
-    scale = min(w_overlay/tr_br[0], h_overlay/tr_br[1])
-    M[0][0], M[1][1] = scale, scale
-    print(M)
-    dst = cv2.warpPerspective(overlay_img, M, [w_overlay, h_overlay])
-    cv2.imshow("img", dst)
-    cv2.waitKey(0)
+    M[2][0], M[2][1] = lx, ly
 
+    #apply random rotation
+    rot_angle = random.uniform(0, 360)
+    R = cv2.getRotationMatrix2D([w_overlay//2, h_overlay//2], rot_angle, 1)
+    R = np.vstack((R, np.array([0, 0, 1])))
+    M = R.dot(M)
 
+    num = math.sqrt(num)
 
+    #apply random position and scale
+    scale = random.uniform(0.8/num, 1/num)
+    pos = (random.randint(0, w_background-int(scale * w_overlay)), random.randint(0, h_background-int(scale*h_overlay)))
+    S = np.matrix([[scale, 0, pos[0]], [0, scale, pos[1]], [0, 0, 1]])
+    M = S.dot(M)
+
+    #calculate bounding box
+    pts = np.array([[[0, 0], [w_overlay, 0]], [[w_overlay, h_overlay], [0, h_overlay]]], dtype='float32')
+    pts = cv2.perspectiveTransform(pts, M)
+
+    #overlay onto image
+    dst = cv2.warpPerspective(overlay_img, M, [w_background, h_background])
+    alpha = dst[:, :, 3] / 255.0
+
+    alpha_3channel = np.dstack([alpha, alpha, alpha])
+    result = background.copy()
+    for c in range(3):
+        result[:, :, c] = (1 - alpha_3channel[:, :, c]) * background[:, :, c] + \
+                          alpha_3channel[:, :, c] * dst[:, :, c]
+
+    point_vals = np.concatenate((pts[0], pts[1]))
+    out_points = []
+    for pt in point_vals:
+        out_points += [pt[0]/w_background, pt[1]/h_background]
+    out = "0 "
+    for v in out_points:
+        out += "%.3f " % v
+    out += "\n"
+    text.write(out)
+    return result
 
 
 def loader(vals):
     background = cv2.imread(vals[0])
     text_path = output + vals[1] + ".txt"
     with open(text_path, "w") as text:
-        for _ in range(random.randint(2, 4)):
+        count = random.randint(1, 8)
+        for _ in range(count):
             card = "./images/"+random.choice(cards)
             overlay_img = cv2.imread(card, cv2.IMREAD_UNCHANGED)
             try:
-                background = overlay2(background, overlay_img, text)
+                background = overlay2(background, overlay_img, text, count)
             except:
                 break
     cv2.imwrite(output + vals[1] + ".jpg", background)
 
 
 if __name__ == "__main__":
-    background = cv2.imread("C:/large_dataset/background_training/000000001815.jpg")
-    overlay_img = cv2.imread("./images/42371.jpg")
-    text = ""
-    overlay2(background, overlay_img, text)
-
-
-    """
     todo = []
     random.shuffle(images)
     for c, i in enumerate(images):
@@ -152,8 +179,8 @@ if __name__ == "__main__":
             "C:/large_dataset/background_training/"+i,
             str(c))
         )
-        if c > 1:
-            break
+        #if c > 50:
+        #    break
     p = Pool(6)
     for _ in tqdm.tqdm(p.imap_unordered(loader, todo), total=len(todo)):
-        pass """
+        pass
