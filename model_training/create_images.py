@@ -97,6 +97,31 @@ def overlay_with_transform(background, overlay_img, text):
     text.write('\n')
     return result
 
+def overlay2(background, overlay_img, text):
+    if overlay_img.shape[2] == 3:
+        overlay_img = cv2.cvtColor(overlay_img, cv2.COLOR_BGR2BGRA)
+        overlay_img[:, :, 3] = 255
+    h_background, w_background = background.shape[:2]
+    h_overlay, w_overlay = overlay_img.shape[:2]
+    M = np.identity(3)
+    angle = random.randint(0, 360)
+    distance = random.randint(200, 1000)
+    lx = math.cos(angle)*distance
+    ly = math.sin(angle)*distance
+    M[2][0], M[2][1] = -0.00004, 0.0005
+    pts = np.array([[[w_overlay, h_overlay]]], dtype='float32')
+    tr_br = cv2.perspectiveTransform(pts, M)[0][0]
+    print(tr_br)
+    scale = min(w_overlay/tr_br[0], h_overlay/tr_br[1])
+    M[0][0], M[1][1] = scale, scale
+    print(M)
+    dst = cv2.warpPerspective(overlay_img, M, [w_overlay, h_overlay])
+    cv2.imshow("img", dst)
+    cv2.waitKey(0)
+
+
+
+
 
 def loader(vals):
     background = cv2.imread(vals[0])
@@ -106,24 +131,29 @@ def loader(vals):
             card = "./images/"+random.choice(cards)
             overlay_img = cv2.imread(card, cv2.IMREAD_UNCHANGED)
             try:
-                background = overlay_with_transform(background, overlay_img, text)
+                background = overlay2(background, overlay_img, text)
             except:
                 break
     cv2.imwrite(output + vals[1] + ".jpg", background)
 
 
 if __name__ == "__main__":
-    idx = 0
+    background = cv2.imread("C:/large_dataset/background_training/000000001815.jpg")
+    overlay_img = cv2.imread("./images/42371.jpg")
+    text = ""
+    overlay2(background, overlay_img, text)
+
+
+    """
     todo = []
     random.shuffle(images)
-    for i in images:
+    for c, i in enumerate(images):
         todo.append((
             "C:/large_dataset/background_training/"+i,
-            str(idx))
+            str(c))
         )
-        idx+=1
-        if idx > 70000:
+        if c > 1:
             break
     p = Pool(6)
     for _ in tqdm.tqdm(p.imap_unordered(loader, todo), total=len(todo)):
-        pass
+        pass """
