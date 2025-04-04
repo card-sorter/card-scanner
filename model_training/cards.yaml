@@ -1,6 +1,6 @@
 path: C://large_dataset
-train: train
-val: val
+train: train2
+val: val2
 
 nc: 1
 names:

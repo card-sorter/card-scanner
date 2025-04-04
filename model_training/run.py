@@ -7,10 +7,10 @@ import numpy as np
 from ultralytics import YOLO
 
 # Load a pretrained YOLO11n model
-model = YOLO("../runs/segment/train8/weights/best.pt")
+model = YOLO("../runs/segment/train9/weights/best.pt")
 
 # Run inference on 'bus.jpg'
-results = model(["https://media.discordapp.net/attachments/222559292497068043/1357370479996047632/image.png?ex=67eff545&is=67eea3c5&hm=d468312868ab7f125239e12135920b54a040d5ecf22ae172701bb19511818839&=&format=webp&quality=lossless&width=2270&height=1448"])  # results list
+results = model(["https://media.discordapp.net/attachments/693635180954517534/1218336179288801290/IMG_5591.jpg?ex=67f1103c&is=67efbebc&hm=322bef4a693478466a8e002880ff371f4966de5aa051bff5b21376a9e4c01cc2&=&format=webp&width=1141&height=856"])  # results list
 
 def reorder_points(points):
     # Calculate centroids
@@ -29,6 +29,17 @@ def get_card_dimensions(corners):
 
 # Visualize the results
 for i, r in enumerate(results):
+
+
+    # Plot results image
+    im_bgr = r.plot()  # BGR-order numpy array
+    im_rgb = Image.fromarray(im_bgr[..., ::-1])  # RGB-order PIL image
+
+    # Show results to screen (in supported environments)
+    r.show()
+
+    # Save results to disk
+    r.save(filename=f"results{i}.jpg")
 
     if r.masks:
         for c in r.masks.xy:
@@ -56,12 +67,3 @@ for i, r in enumerate(results):
                 cv2.waitKey(0)
 
 
-    # Plot results image
-    im_bgr = r.plot()  # BGR-order numpy array
-    im_rgb = Image.fromarray(im_bgr[..., ::-1])  # RGB-order PIL image
-
-    # Show results to screen (in supported environments)
-    r.show()
-
-    # Save results to disk
-    r.save(filename=f"results{i}.jpg")
