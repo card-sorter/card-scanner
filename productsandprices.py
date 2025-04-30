@@ -50,9 +50,13 @@ def get_row_count(mydb, table_name):
 
 def infer_data_type(value):
     value = value.strip()
-    if value.isdigit():
-        return "INT"
     if re.fullmatch(r"-?\d+\.\d+", value):
         return "DECIMAL(10,2)"
-    else: 
+    elif value.isdigit():
+        return "INT"
+    elif value.lower() in ('true', 'false'):
+        return "BOOLEAN"
+    elif re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}", value):
+        return "DATE"
+    else:
         return "VARCHAR(255)"
