@@ -1,0 +1,6 @@
+project root file will need to have a few folders and scripts (depending on how automated you want it to be)
+obviously we need jack's trained model "best.pt" download model 9 from his cropping thingy
+then if you want to database, feel free to but if you want to just test out the code, you can use "download images" and "download csv" python files underscripts, should get those two folders downloaded
+once you the folders images and sets, the model is there is the root directory, you are good to go. \
+just run webcamhash.py and prep your android cam, remember to change how you want to connect and use it. 
+Press S to scan and a pop up window should appear
