@@ -7,6 +7,7 @@ import os
 import pandas as pd
 from glob import glob
 import time
+import mysql.connector
 
 # Configuration
 MODEL_PATH = "best.pt" #Model jack trained
@@ -16,6 +17,13 @@ PHONE_IP = "" #Enter your phone IP here, uh, if we need to swap to direct connec
 DROIDCAM_PORT = "4747" #Webcam
 OUTPUT_DIR = "detected_cards" #This takes the shot and save it as a jpg.
 TARGET_SIZE = (600, 840) #size
+MYSQL_CONFIG = {
+    'host': 'your host', #localhost
+    'port' : 3306,
+    'database' : 'enter_database_name',
+    'user' : 'enter_username',
+    'password' : 'enter_password'
+}
 
 class CardIdentifier:
     def __init__(self):
@@ -26,6 +34,7 @@ class CardIdentifier:
         self._init_video_stream() #setup droidcam video feed
         self.model.fuse() #Optimizes yolo model for inference
         self.model.conf = 0.7 #threshold set at 70% confidence so only ≥ are kept
+        self.db_conn = self._init_db() #initialize mysql
 
     def _init_video_stream(self):
         self.cap = cv2.VideoCapture(f"http://{PHONE_IP}:{DROIDCAM_PORT}/video")
@@ -46,19 +55,39 @@ class CardIdentifier:
             except Exception as e:
                 print(f"Error loading {csv_file}: {str(e)}")
         return card_data
+    
+    def _init_db(self):
+        conn = mysql.connector.connect(**MYSQL_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute(""" 
+            CREATE TABLE IF NOT EXISTS card_hashes (
+                card_id VARCHAR(255) PRIMARY KEY,
+                phash BIGINT UNSIGNED, 
+                dhash BIGINT UNSIGNED
+            )
+        """)
+        conn.commit()
+        self._create_hash_db(cursor, conn)
+        return conn
 
-    def _create_hash_db(self):
+    def _create_hash_db(self, cursor, conn):
+        cursor.execute("SELECT card_id FROM card_hashes")
+        existing_ids = set(row[0] for row in cursor.fetchall())
         hash_db = {}
         for img_path in glob(os.path.join(IMAGE_DIR, "*.jpg")): #find the jpgs in images
             card_id = os.path.splitext(os.path.basename(img_path))[0] #extract the filename which is the Id
             try:
                 with Image.open(img_path) as img:
-                    hash_db[card_id] = {
-                        'phash': imagehash.phash(img), #percep hash, computes hash invariant to scaling + minor distortions
-                        'dhash': imagehash.dhash(img) #difference hash, computes hash based on pixel differences, fast but inaccurate
-                    }
+                    # Convert hashes to BIGINT (64-bit integers)
+                    phash = int(str(imagehash.phash(img)), 16)
+                    dhash = int(str(imagehash.dhash(img)), 16)
+                    cursor.execute(
+                            "INSERT INTO card_hashes (card_id, phash, dhash) VALUES (%s, %s, %s)",
+                            (card_id, phash, dhash)
+                        )
             except Exception as e:
                 print(f"Can't read thi {img_path}: {str(e)}")
+        conn.commit()
         return hash_db
 
     def _order_points(self, pts): #gives 4 corner points for pers transform (req by cv2.getPerspectiveTransform)
@@ -106,14 +135,17 @@ class CardIdentifier:
         """Match card using dual hashing"""
         try:
             pil_img = Image.fromarray(cv2.cvtColor(cropped_img, cv2.COLOR_BGR2RGB))
-            query_phash = imagehash.phash(pil_img)
-            query_dhash = imagehash.dhash(pil_img) #compute hashes for detected card
+            query_phash = int(str(imagehash.phash(pil_img)), 16)
+            query_dhash = int(str(imagehash.dhash(pil_img)), 16) #compute hashes for detected card
             
             best_match = None
             min_distance = float('inf')
             
             for card_id, hashes in self.hash_db.items():
-                distance = (query_phash - hashes['phash']) + (query_dhash - hashes['dhash'])
+                # Calculate Hamming distance using XOR operation
+                phash_distance = bin(query_phash ^ hashes['phash']).count('1')
+                dhash_distance = bin(query_dhash ^ hashes['dhash']).count('1')
+                distance = phash_distance + dhash_distance
                 if distance < min_distance:
                     min_distance = distance
                     best_match = card_id #measure similiarity between hashes, lower better
