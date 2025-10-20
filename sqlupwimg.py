@@ -81,7 +81,7 @@ def setup_database():
             )
         """)
         
-        print("✅ Database structure created successfully!")
+        print(" Database structure created successfully!")
         
         # Import all CSV files from sets directory
         sets_dir = "sets"
@@ -90,7 +90,7 @@ def setup_database():
             total_cards = 0
             
             for csv_file in csv_files:
-                print(f"📂 Processing {os.path.basename(csv_file)}...")
+                print(f" Processing {os.path.basename(csv_file)}...")
                 
                 try:
                     # Read CSV file with error handling
@@ -157,29 +157,29 @@ def setup_database():
                                 total_cards += 1
                             
                         except Exception as e:
-                            print(f"    ⚠️ Error inserting row: {e}")
+                            print(f"     Error inserting row: {e}")
                             continue
                     
-                    print(f"  ✅ Imported {inserted_count} cards from {os.path.basename(csv_file)}")
+                    print(f"   Imported {inserted_count} cards from {os.path.basename(csv_file)}")
                     
                 except Exception as e:
-                    print(f"  ❌ Error processing {csv_file}: {e}")
+                    print(f"   Error processing {csv_file}: {e}")
                     continue
             
-            print(f"\n🎉 Successfully imported {total_cards} total cards!")
+            print(f"\n Successfully imported {total_cards} total cards!")
         
         else:
-            print(f"❌ Sets directory '{sets_dir}' not found!")
+            print(f" Sets directory '{sets_dir}' not found!")
         
         conn.commit()
         cursor.close()
         conn.close()
         
-        print("\n✅ Database setup completed!")
+        print("\n Database setup completed!")
         return True
         
     except Exception as e:
-        print(f"❌ Database setup failed: {e}")
+        print(f" Database setup failed: {e}")
         return False
 
 def compute_and_store_image_hashes():
@@ -188,10 +188,10 @@ def compute_and_store_image_hashes():
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
         
-        print("\n🔄 Computing image hashes...")
+        print("\n Computing image hashes...")
         images_dir = "images"
         if not os.path.exists(images_dir):
-            print(f"❌ Images directory '{images_dir}' not found!")
+            print(f" Images directory '{images_dir}' not found!")
             return False
         
         # Look for all image files
@@ -201,7 +201,7 @@ def compute_and_store_image_hashes():
             image_files.extend(glob(os.path.join(images_dir, ext)))
             image_files.extend(glob(os.path.join(images_dir, ext.upper())))
         
-        print(f"📁 Found {len(image_files)} image files")
+        print(f" Found {len(image_files)} image files")
         
         processed_count = 0
         error_count = 0
@@ -242,24 +242,24 @@ def compute_and_store_image_hashes():
                     """, (card_id, phash, dhash, colorhash, width, height))
                     
                     processed_count += 1
-                    print(f"  ✅ Processed: {filename}")
+                    print(f"   Processed: {filename}")
                         
             except Exception as e:
                 error_count += 1
-                print(f"  ❌ Can't process image {filename}: {str(e)}")
+                print(f"   Can't process image {filename}: {str(e)}")
         
         conn.commit()
         cursor.close()
         conn.close()
         
-        print(f"\n🎉 Successfully processed {processed_count} images")
+        print(f"\n Successfully processed {processed_count} images")
         if error_count > 0:
-            print(f"⚠️  Failed to process {error_count} images")
+            print(f"  Failed to process {error_count} images")
         
         return True
         
     except Exception as e:
-        print(f"❌ Error computing image hashes: {e}")
+        print(f" Error computing image hashes: {e}")
         return False
 
 def test_database():
@@ -271,12 +271,12 @@ def test_database():
         # Count total cards
         cursor.execute("SELECT COUNT(*) FROM `cards`")
         total_cards = cursor.fetchone()[0]
-        print(f"📊 Total cards in database: {total_cards}")
+        print(f" Total cards in database: {total_cards}")
         
         # Count total hashes
         cursor.execute("SELECT COUNT(*) FROM `card_hashes`")
         total_hashes = cursor.fetchone()[0]
-        print(f"🖼️ Total image hashes in database: {total_hashes}")
+        print(f" Total image hashes in database: {total_hashes}")
         
         # Show some sample cards with hashes
         cursor.execute("""
@@ -286,7 +286,7 @@ def test_database():
             LIMIT 5
         """)
         sample_data = cursor.fetchall()
-        print("📝 Sample cards with hashes:")
+        print(" Sample cards with hashes:")
         for card in sample_data:
             print(f"   {card[0]}: {card[1]}")
             if card[2]:
@@ -297,19 +297,20 @@ def test_database():
         return True
         
     except Exception as e:
-        print(f"❌ Database test failed: {e}")
+        print(f" Database test failed: {e}")
         return False
 
 if __name__ == "__main__":
-    print("🃏 Pokemon Card Database Setup")
+    print(" Pokemon Card Database Setup")
     print("=" * 50)
     
     if setup_database():
-        print("\n🔄 Computing image hashes...")
+        print("\n Computing image hashes...")
         if compute_and_store_image_hashes():
             print("\n🔍 Testing database...")
             test_database()
         else:
-            print("\n❌ Hash computation failed!")
+            print("\n Hash computation failed!")
     else:
-        print("\n❌ Setup failed!")
+
+        print("\n Setup failed!")
