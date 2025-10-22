@@ -67,6 +67,14 @@ class DBInterface:
             print(f"x Execute failed: {e}")
             return None
 
+    async def _fetch_csv(self, url: str, path: str) -> :
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    #TODO:csv files
+                    return True
+                return False
+
     async def _fetch_category(self, category: int = GAME_CATEGORY)->bool:
         """
         Download the CSV files from tcgcsv for a category.
@@ -74,16 +82,19 @@ class DBInterface:
         :return:
         """
 
-        try: 
-            async with aiohttp.ClientSession() as session: 
-                url = f"https://tcgcsv.com/tcgplayer/{category}/groups"
-                async with session.get(url) as response: 
-                    if response.status == 200:
-                        data = await response.json()
-                        self._process_category_data(data)
-                        print(f"Successfully fetched category {category}")
-                        return True
-                    return False
+        try:
+            url = f"https://tcgcsv.com/tcgplayer/{category}/Groups.csv"
+            path = f"./categories/group{category}.csv"
+            await self._fetch_csv(url, path)
+
+            group = [] # fill in from file
+            tasks = []
+            async with asyncio.TaskGroup() as tg:
+                for cat in group:
+                    tasks.append(tg.create_task(self._fetch_csv(cat, f"./category{category}/{group}.csv")))
+
+            # Then load CSVs
+            return True
 
         except Exception as e: 
             print(f"Failed to fetch category {category}: {e}")
