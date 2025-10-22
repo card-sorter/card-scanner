@@ -3,8 +3,12 @@ import aiosqlite
 from sympy import false
 from git import Repo
 import os
+import pandas as pd
+import aiohttp
 
 from config import DATABASE, GAME_CATEGORY, HASH_PATH, HASH_REPOSITORY
+
+http = "https://tcgcsv.com/tcgplayer/Categories.csv"
 
 class DBInterface:
     def __init__(self):
@@ -19,14 +23,30 @@ class DBInterface:
         Connect to the database.
         :return:
         """
-        pass
+        try: 
+            self.db = await aiosqlite.connect(path)
+            print("Connected to database: {path}")
+            return True
+        
+        except Exception as e: 
+            print(f"Failed to connect to database: {e}")
+            self.db = None
+            return False
 
     async def close(self)->bool:
         """
         Close the database connection.
         :return:
         """
-        pass
+        try:    
+            await self.db.close()
+            self.db = None
+            print("Database connection closed")
+            return True
+        
+        except Exception as e:
+            print(f"Failed to disconnect database: {e}")
+            return False
 
     async def _execute(self, statement: str)-> aiosqlite.Cursor | None:
         """
@@ -35,6 +55,17 @@ class DBInterface:
         :param statement:
         :return:
         """
+        if not self.connected: 
+            raise Exception("Database not connected")
+        
+        try: 
+            cursor = await self.db.execute(statement)
+            await self.db.commit()
+            return cursor 
+        
+        except Exception as e: 
+            print(f"x Execute failed: {e}")
+            return None
 
     async def _fetch_category(self, category: int = GAME_CATEGORY)->bool:
         """
@@ -42,7 +73,21 @@ class DBInterface:
         Use asyncio tasks to fetch in parallel.
         :return:
         """
-        pass
+
+        try: 
+            async with aiohttp.ClientSession() as session: 
+                url = f"https://tcgcsv.com/tcgplayer/{category}/groups"
+                async with session.get(url) as response: 
+                    if response.status == 200:
+                        data = await response.json()
+                        self._process_category_data(data)
+                        print(f"Successfully fetched category {category}")
+                        return True
+                    return False
+
+        except Exception as e: 
+            print(f"Failed to fetch category {category}: {e}")
+            return False
 
     async def _load_card_csv(self, path: str, category: int = GAME_CATEGORY)->bool:
         """
