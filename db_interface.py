@@ -1,9 +1,7 @@
 import asyncio
 import aiosqlite
-from sympy import false
 from git import Repo
 import os
-import pandas as pd
 import aiohttp
 
 from config import DATABASE, GAME_CATEGORY, HASH_PATH, HASH_REPOSITORY
