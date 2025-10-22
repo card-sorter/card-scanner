@@ -67,7 +67,7 @@ class DBInterface:
             print(f"x Execute failed: {e}")
             return None
 
-    async def _fetch_csv(self, url: str, path: str) -> :
+    async def _fetch_csv(self, url: str, path: str) -> bool:
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 if response.status == 200:
