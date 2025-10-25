@@ -3,10 +3,11 @@ import aiosqlite
 from git import Repo
 import os
 import aiohttp
+import csv
+from io import StringIO
+import aiofiles
 
 from config import DATABASE, GAME_CATEGORY, HASH_PATH, HASH_REPOSITORY
-
-http = "https://tcgcsv.com/tcgplayer/Categories.csv"
 
 class DBInterface:
     def __init__(self):
@@ -62,16 +63,37 @@ class DBInterface:
             return cursor 
         
         except Exception as e: 
-            print(f"x Execute failed: {e}")
+            print(f"Execute failed: {e}")
             return None
 
     async def _fetch_csv(self, url: str, path: str) -> bool:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if response.status == 200:
-                    #TODO:csv files
-                    return True
-                return False
+        """
+        Download the CSV files from tcgcsv Groups file
+        and save it in the corresponding path
+        :return:
+        """
+        try: 
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        #TODO:csv files
+                        #Read the response text
+                        csv_text = await response.text()
+                        #Check if the dir exists
+                        os.makedrs(os.path.dirname(path), exist_ok=True) 
+                        #Save to file using aiofiles
+                        async with aiofiles.open(path, 'w', encoding = 'utf=8') as file:
+                            await file.write(csv_text) #Raw data
+
+                        print(f"CSV successfully saved to: {path}")
+                        return True
+                    else: 
+                        print(f"Failed to fetch CSV: HTTP {response.status}")
+                        return False
+                
+        except Exception as e: 
+            print(f"Error fetching CSV: {e}")
+            return False
 
     async def _fetch_category(self, category: int = GAME_CATEGORY)->bool:
         """
@@ -85,7 +107,7 @@ class DBInterface:
             path = f"./categories/group{category}.csv"
             await self._fetch_csv(url, path)
 
-            group = [] # fill in from file
+            group = [] #Fill in from file
             tasks = []
             async with asyncio.TaskGroup() as tg:
                 for cat in group:
