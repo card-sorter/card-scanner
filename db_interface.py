@@ -66,6 +66,9 @@ class DBInterface:
         except Exception as e: 
             print(f"Execute failed: {e}")
             return None
+        
+    #async def _initialize_db_table(self, statement: str):
+     #   pass
 
     async def _fetch_csv(self, url: str, path: str) -> bool:
         """
@@ -80,7 +83,7 @@ class DBInterface:
                         #TODO:csv files
                         csv_text = await response.text()
 
-                        os.makedrs(os.path.dirname(path), exist_ok=True) 
+                        os.makedirs(os.path.dirname(path), exist_ok=True) 
 
                         async with aiofiles.open(path, 'w', encoding = 'utf=8') as file:
                             await file.write(csv_text) #Raw data
@@ -125,7 +128,7 @@ class DBInterface:
                 print(f"No Group CSV file fetched")
                 return False 
             
-            group_ids = await self._read_groups_from_file(path, column_name="groupId")
+            group_ids = await self._read_file(path, column_name="groupId")
             os.makedirs(f"./category{category}", exist_ok=True)
 
             async with asyncio.TaskGroup() as tg:
@@ -133,10 +136,7 @@ class DBInterface:
                     group_url = f"https://tcgcsv.com/tcgplayer/{category}/{groupId}/ProductsAndPrices.csv"
                     group_path = f"./category{category}/{groupId}.csv"
                     tg.create_task(self._fetch_csv(group_url, group_path))
-                #for cat in group:
-                 #   tasks.append(tg.create_task(self._fetch_csv(cat, f"./category{category}/{group}.csv")))
 
-            # Then load CSVs
             return True
         
         except (aiohttp.ClientError, asyncio.TimeoutError) as e: 
@@ -176,20 +176,13 @@ class DBInterface:
         try: 
             if os.path.exists(path):
                 try:
-                    git_repo = Repo(path)
-                    origin = git_repo.remotes.origin
-                    origin.fetch()
-                    current_branch = git_repo.active_branch.name
-                    local_commit = git_repo.head.commit
-                    remote_commit = git_repo.remotes.origin.refs[current_branch].commit
-
-                    if local_commit != remote_commit:
-                        origin.pull()
-                        print("Repository updated successfully.")
+                    if await self._fetch_hashes(): 
+                        print("Repository is ready to use")
+                        return True
                     else: 
-                        print("Repository is already up to date.")
-                    return True
-                
+                        print("Failed to initialize repository")
+                        return False
+                    
                 except git.InvalidGitRepositoryError:
                     print(f"Directory exists but is not a git repo: {path}")
                     return False
@@ -210,13 +203,29 @@ class DBInterface:
         :param path:
         :return:
         """
-        pass
+        try:
+            git_repo = Repo(path)
+            origin = git_repo.remotes.origin
+            origin.fetch()
+            current_branch = git_repo.active_branch.name
+            local_commit = git_repo.head.commit
+            remote_commit = git_repo.remotes.origin.refs[current_branch].commit
+
+            if local_commit != remote_commit:
+                origin.pull()
+                print("Repository successfully updated.")
+            else: 
+                print("Repository is already up to date.")
+            return True
+        except Exception as e:
+            print(f"Failed fetching hashes: {e}")
+            return False
 
     async def _load_hashes(self):
         pass
 
 async def main():
     result = DBInterface()
-    await result._initialize_hash_repository()
+    await result._fetch_category()
 
-asyncio.run(main())
+asyncio.run(main())        
