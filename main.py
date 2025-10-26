@@ -8,19 +8,18 @@ from db_interface import DBInterface
 from config import DATABASE, MODEL_PATH, PORT, HOSTNAME
 from PIL import Image
 
-# Initialize components
 scanner = CardScanner()
 db_interface = DBInterface()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # startup
     print("Starting up")
-    await scanner.load_model()
+    await scanner.load_model()  
     await db_interface.open()
     print("startup complete")
     yield
-    # Shutdown
+    # shutdown
     await db_interface.close()
     print("shutdown complete")
 
@@ -31,40 +30,47 @@ async def scan_card(image: UploadFile = File(...)):
     try:
         print(f"processing: {image.filename}")
         
-        if not image.content_type.startswith('image/'): #Image validation
+        if not image.content_type.startswith('image/'):
             raise HTTPException(status_code=400, detail="must be an image")
         
-        image_data = await image.read() #reading image
+        image_data = await image.read()
         pil_image = Image.open(io.BytesIO(image_data))
         print(f"Image loaded: {pil_image.size}")
         
-        cards = await scanner.scan_cards(pil_image) # Scan cards
+        cards = await scanner.scan_cards(pil_image)
         print(f"Found {len(cards)} cards")
         
-        results = [] # process results with database matching
+        results = []
         for card in cards:
-            match = await db_interface.find_closest_card_match(card.hash_bigints)
+            matched_cards = await db_interface.find_cards(card)
             
             card_data = {
                 "scanned_hash": card.hash,
                 "scanned_hash_bigints": card.hash_bigints,
-                "match_found": match is not None
+                "matches_found": len(matched_cards)
             }
             
-            if match:
+            if matched_cards:
+                best_match = matched_cards[0]
                 card_data.update({
-                    "card_id": match['card_id'],
-                    "matched_filename": match['filename'],
-                    "matched_hash_string": match['hash_string'],
-                    "matched_bigint": match['bigint_full_64bit'],
-                    "hamming_distance": match['hamming_distance'],
-                    "confidence_percentage": match['confidence_percentage'],
-                    "is_high_confidence": match['confidence_percentage'] > 90.0  # 90%+ confidence
+                    "best_match": {
+                        "card_id": best_match.values.get('card_id'),
+                        "matched_filename": best_match.values.get('filename'),
+                        "matched_hash_string": best_match.values.get('matched_hash'),
+                        "hamming_distance": best_match.distance,
+                        "confidence_percentage": best_match.values.get('confidence'),
+                        "is_high_confidence": best_match.values.get('confidence', 0) > 90.0,
+                        "card_details": best_match.values.get('card_details')
+                    },
+                    "all_matches": [
+                        {
+                            "card_id": match.values.get('card_id'),
+                            "filename": match.values.get('filename'),
+                            "confidence": match.values.get('confidence')
+                        }
+                        for match in matched_cards
+                    ]
                 })
-                
-                card_details = await db_interface.get_card_details(match['card_id'])
-                if card_details:
-                    card_data["card_details"] = card_details
             
             results.append(card_data)
         
@@ -78,6 +84,32 @@ async def scan_card(image: UploadFile = File(...)):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Err processing image: {str(e)}")
+
+# new endpoints
+@app.get("/categories")
+async def get_categories():
+    """Get available card game categories"""
+    try:
+        categories = await db_interface.get_categories()
+        return {
+            "categories": categories,
+            "source": "https://tcgcsv.com/tcgplayer/categories"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching categories: {str(e)}")
+
+@app.get("/columns/{group_id}")
+async def get_group_columns(group_id: int):
+    """Get CSV column headers for a specific game group"""
+    try:
+        columns = await db_interface.get_group_columns(group_id)
+        return {
+            "group_id": group_id,
+            "columns": columns,
+            "source": f"https://tcgcsv.com/{group_id}/cards"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching columns for group {group_id}: {str(e)}")
 
 @app.get("/health")
 async def health_check():
@@ -94,12 +126,14 @@ async def root():
     return {
         "message": "Card Scanner API", 
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "categories": "/categories",
+        "columns": "/columns/{group_id}"
     }
 
 @app.get("/test-db-connection")
 async def test_db_connection():
-    """Test database connection and sample query"""  # Test a simple query to verify database structure
+    """Test database connection and sample query"""
     try:
         cursor = await db_interface._execute("SELECT name FROM sqlite_master WHERE type='table'")
         if cursor:
