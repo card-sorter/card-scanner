@@ -99,7 +99,22 @@ class DBInterface:
                 directLowPrice FLOAT, 
                 subTypeName TEXT, 
                 data TEXT
-                '''
+                );
+            '''
+            await self._execute(statement)
+            statement = '''
+            CREATE TABLE IF NOT EXISTS products (
+                groupId INTEGER,
+                name TEXT,
+                abbreviation TEXT,
+                isSupplemental BOOLEAN,
+                publishedOn DATETIME,
+                modifiedOn DATETIME,
+                categoryId INTEGER,
+                FOREIGN KEY (categoryId) REFERENCES cards (categoryId)
+                );
+            '''
+            await self._execute(statement)
             return True
 
         except Exception as e:
@@ -149,6 +164,55 @@ class DBInterface:
             print(f"Error reading groups file: {e}")
             return []
 
+    async def _load_data(self, content: str, table_name: str)->bool:
+        try:
+            lines = content.strip().split('\n')
+            if len(lines) < 2:
+                print("CSV file has no data rows")
+                return False
+
+            header = [col.strip() for col in lines[0].split(',')]
+            print(f"CSV Header: {header}")
+
+            data_to_insert = []
+            for line in lines[1:]:
+                if line.strip():
+                    values = [v.strip() for v in line.split(',')]
+                    if len(values) == len(header):
+                        data_to_insert.append(tuple(values))
+
+            if data_to_insert:
+                columns = ', '.join([f'"{col}"' for col in header])
+                placeholders = ', '.join(['?'] * len(header))
+                sql = f"INSERT OR REPLACE INTO {table_name} ({columns}) VALUES ({placeholders})"
+
+                await self.db.executemany(sql, data_to_insert)
+                await self.db.commit()
+                print(f"Loaded {len(data_to_insert)} rows into table")
+                return True
+            else:
+                print(f"No data to load")
+                return False
+
+        except Exception as e:
+            print(f"Failed to load data: {e}")
+            return False
+
+    async def _fetch_products(self, category: int = GAME_CATEGORY)->bool:
+        try:
+            async with aiofiles.open(f"./categories/group{category}.csv", 'r', encoding='utf-8') as file:
+                content = await file.read()
+
+                if await self._load_data(content, "products"):
+                    return True
+                else:
+                    return False
+        except Exception as e:
+            print(f"Failed to load products: {e}")
+            return False
+
+
+
     async def _fetch_category(self, category: int = GAME_CATEGORY)->bool:
         """
         Download the CSV files from tcgcsv for a category.
@@ -165,13 +229,14 @@ class DBInterface:
                 return False 
             
             group_ids = await self._read_file(path, column_name="groupId")
-            os.makedirs(f"./category{category}", exist_ok=True)
 
             async with asyncio.TaskGroup() as tg:
                 for groupId in group_ids:
                     group_url = f"https://tcgcsv.com/tcgplayer/{category}/{groupId}/ProductsAndPrices.csv"
                     group_path = f"./categories/category{category}/{groupId}.csv"
                     tg.create_task(self._fetch_csv(group_url, group_path))
+                    tg.create_task(self._load_card_csv(group_path))
+
             return True
         
         except (aiohttp.ClientError, asyncio.TimeoutError) as e: 
@@ -195,8 +260,20 @@ class DBInterface:
         :return:
         """
         try:
+            group_ids = await self._read_file(path, column_name="groupId")
+            if not group_ids:
+                print("Failed to load groups")
+                return False
+
+            async with asyncio.TaskGroup() as tg:
+                for groupId in group_ids:
+                    group_path = f"./categories/category{category}/{groupId}.csv"
+                    async with aiofiles.open(group_path, 'r', encoding='utf-8') as file:
+                        content = await file.read()
+                    tg.create_task(self._load_data(content, "cards"))
 
             return True
+
         except Exception as e: 
             print(f"Failed to load category {category}: {e}")
             return False
@@ -264,36 +341,10 @@ class DBInterface:
             async with aiofiles.open("./hashes/image_hashes.csv", 'r', encoding='utf-8') as file:
                 content = await file.read()
 
-            lines = content.strip().split('\n')
-            if len(lines) < 2:
-                print("CSV file has no data rows")
-                return False
-
-            header = [col.strip() for col in lines[0].split(',')]
-            print(f"CSV Header: {header}")
-
-            await self._initialize_table()
-
-            data_to_insert = []
-            for line in lines[1:]:
-                if line.strip():
-                    values = [v.strip() for v in line.split(',')]
-                    if len(values) == len(header):
-                        converted_values = [int(v) if v.isdigit() else 0 for v in values]
-                        data_to_insert.append(tuple(converted_values))
-
-            if data_to_insert:
-                columns = ', '.join([f'"{col}"' for col in header])
-                placeholders = ', '.join(['?'] * len(header))
-                sql = f"INSERT OR REPLACE INTO hashes ({columns}) VALUES ({placeholders})"
-
-                await self.db.executemany(sql, data_to_insert)
-                await self.db.commit()
-                print(f"Loaded {len(data_to_insert)} rows into hashes table")
+            if await self._load_data(content, "hashes"):
+                return True
             else:
-                print("No data to insert")
-
-            return True
+                return False
 
         except Exception as e:
             print(f"Failed to load hashes: {e}")
@@ -315,7 +366,7 @@ async def main():
         await db._initialize_table()
         success = await db._fetch_category()
         if success:
-            print("Hashes loaded successfully!")
+            print("Products loaded successfully!")
         await db.close()
 
 
