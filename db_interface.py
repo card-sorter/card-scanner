@@ -1,13 +1,16 @@
 import asyncio
+from typing import List
+
 import aiosqlite
-from git import Repo
+from git import Repo, InvalidGitRepositoryError
 import os
 import aiohttp
 import csv
 from io import StringIO
 import aiofiles
-import git
+import json
 
+from common import Card
 from config import DATABASE, GAME_CATEGORY, HASH_PATH, HASH_REPOSITORY
 
 class DBInterface:
@@ -18,7 +21,7 @@ class DBInterface:
     def connected(self):
         return bool(self.db)
 
-    async def open(self, path: str = DATABASE)->bool:
+    async def open(self, path: str = DATABASE["path"])->bool:
         """
         Connect to the database.
         :return:
@@ -66,9 +69,57 @@ class DBInterface:
         except Exception as e: 
             print(f"Execute failed: {e}")
             return None
-        
-    #async def _initialize_db_table(self, statement: str):
-     #   pass
+
+    async def _initialize_table(self, category: int = GAME_CATEGORY) -> bool:
+        """
+        Initialize the database
+        """
+        try:
+            statement = 'CREATE TABLE IF NOT EXISTS hashes (\ncardID INTEGER PRIMARY KEY'
+            for i in range(1,5          ):
+                statement = statement + f",\nbigint{i} BIGINT DEFAULT 0"
+            statement = statement + "\n);"
+            print(statement)
+            await self._execute(statement)
+            statement = '''
+            CREATE TABLE IF NOT EXISTS cards (
+                productId INTEGER PRIMARY KEY, 
+                name TEXT, 
+                cleanName TEXT, 
+                imageURL TEXT, 
+                categoryId INTEGER, 
+                groupId INTEGER, 
+                url TEXT, 
+                modifiedOn DATETIME, 
+                imageCount INTEGER, 
+                lowPrice FLOAT, 
+                midPrice FLOAT, 
+                highPrice FLOAT, 
+                marketPrice FLOAT, 
+                directLowPrice FLOAT, 
+                subTypeName TEXT, 
+                data TEXT
+                );
+            '''
+            await self._execute(statement)
+            statement = '''
+            CREATE TABLE IF NOT EXISTS products (
+                groupId INTEGER,
+                name TEXT,
+                abbreviation TEXT,
+                isSupplemental BOOLEAN,
+                publishedOn DATETIME,
+                modifiedOn DATETIME,
+                categoryId INTEGER,
+                FOREIGN KEY (categoryId) REFERENCES cards (categoryId)
+                );
+            '''
+            await self._execute(statement)
+            return True
+
+        except Exception as e:
+            print(f"Failed to initialize table: {e}")
+            return False
 
     async def _fetch_csv(self, url: str, path: str) -> bool:
         """
@@ -113,6 +164,55 @@ class DBInterface:
             print(f"Error reading groups file: {e}")
             return []
 
+    async def _load_data(self, content: str, table_name: str)->bool:
+        try:
+            lines = content.strip().split('\n')
+            if len(lines) < 2:
+                print("CSV file has no data rows")
+                return False
+
+            header = [col.strip() for col in lines[0].split(',')]
+            print(f"CSV Header: {header}")
+
+            data_to_insert = []
+            for line in lines[1:]:
+                if line.strip():
+                    values = [v.strip() for v in line.split(',')]
+                    if len(values) == len(header):
+                        data_to_insert.append(tuple(values))
+
+            if data_to_insert:
+                columns = ', '.join([f'"{col}"' for col in header])
+                placeholders = ', '.join(['?'] * len(header))
+                sql = f"INSERT OR REPLACE INTO {table_name} ({columns}) VALUES ({placeholders})"
+
+                await self.db.executemany(sql, data_to_insert)
+                await self.db.commit()
+                print(f"Loaded {len(data_to_insert)} rows into table")
+                return True
+            else:
+                print(f"No data to load")
+                return False
+
+        except Exception as e:
+            print(f"Failed to load data: {e}")
+            return False
+
+    async def _fetch_products(self, category: int = GAME_CATEGORY)->bool:
+        try:
+            async with aiofiles.open(f"./categories/group{category}.csv", 'r', encoding='utf-8') as file:
+                content = await file.read()
+
+                if await self._load_data(content, "products"):
+                    return True
+                else:
+                    return False
+        except Exception as e:
+            print(f"Failed to load products: {e}")
+            return False
+
+
+
     async def _fetch_category(self, category: int = GAME_CATEGORY)->bool:
         """
         Download the CSV files from tcgcsv for a category.
@@ -129,13 +229,13 @@ class DBInterface:
                 return False 
             
             group_ids = await self._read_file(path, column_name="groupId")
-            os.makedirs(f"./category{category}", exist_ok=True)
 
             async with asyncio.TaskGroup() as tg:
                 for groupId in group_ids:
                     group_url = f"https://tcgcsv.com/tcgplayer/{category}/{groupId}/ProductsAndPrices.csv"
-                    group_path = f"./category{category}/{groupId}.csv"
+                    group_path = f"./categories/category{category}/{groupId}.csv"
                     tg.create_task(self._fetch_csv(group_url, group_path))
+                    tg.create_task(self._load_card_csv(group_path))
 
             return True
         
@@ -159,9 +259,21 @@ class DBInterface:
         :param path:
         :return:
         """
-        try: 
+        try:
+            group_ids = await self._read_file(path, column_name="groupId")
+            if not group_ids:
+                print("Failed to load groups")
+                return False
+
+            async with asyncio.TaskGroup() as tg:
+                for groupId in group_ids:
+                    group_path = f"./categories/category{category}/{groupId}.csv"
+                    async with aiofiles.open(group_path, 'r', encoding='utf-8') as file:
+                        content = await file.read()
+                    tg.create_task(self._load_data(content, "cards"))
 
             return True
+
         except Exception as e: 
             print(f"Failed to load category {category}: {e}")
             return False
@@ -183,7 +295,7 @@ class DBInterface:
                         print("Failed to initialize repository")
                         return False
                     
-                except git.InvalidGitRepositoryError:
+                except InvalidGitRepositoryError:
                     print(f"Directory exists but is not a git repo: {path}")
                     return False
                 
@@ -221,11 +333,42 @@ class DBInterface:
             print(f"Failed fetching hashes: {e}")
             return False
 
-    async def _load_hashes(self):
+    async def _load_hashes(self, path: str = HASH_PATH) -> bool:
+        """
+        Load hashes into the database table
+        """
+        try:
+            async with aiofiles.open("./hashes/image_hashes.csv", 'r', encoding='utf-8') as file:
+                content = await file.read()
+
+            if await self._load_data(content, "hashes"):
+                return True
+            else:
+                return False
+
+        except Exception as e:
+            print(f"Failed to load hashes: {e}")
+            return False
+
+    async def update(self):
+        pass
+
+    async def setup(self):
+        await self.update()
+        pass
+
+    async def find_cards(self, compare: Card) -> List[Card]:
         pass
 
 async def main():
-    result = DBInterface()
-    await result._fetch_category()
+    db = DBInterface()
+    if await db.open():
+        await db._initialize_table()
+        success = await db._fetch_category()
+        if success:
+            print("Products loaded successfully!")
+        await db.close()
 
-asyncio.run(main())        
+
+if __name__ == "__main__":
+    asyncio.run(main())

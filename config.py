@@ -3,7 +3,9 @@ PORT = "8000"
 HOSTNAME = "localhost"
 UPDATE_HOUR = 2
 UPDATE_MINUTE = 30
-DATABASE = "./image_hashes.db" 
+DATABASE = {
+"path": "./database.db"
+}
 GAME_CATEGORY = 3
 HASH_REPOSITORY = "https://github.com/card-sorter/hashes.git"
 HASH_PATH = "./hashes"
