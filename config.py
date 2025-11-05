@@ -1,6 +1,6 @@
 MODEL_PATH = "model/best.pt"
 PORT = "8000"
-HOSTNAME = "0.0.0.0"
+HOSTNAME = "localhost"
 UPDATE_HOUR = 2
 UPDATE_MINUTE = 30
 DATABASE = {
