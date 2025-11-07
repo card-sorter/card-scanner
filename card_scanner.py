@@ -5,12 +5,10 @@ import numpy as np
 from ultralytics import YOLO
 from config import MODEL_PATH
 from common import Card
-from rgb_hasher import RGBHasher  # Import the shared hasher
 
 class CardScanner:
     def __init__(self):
         self.model = None
-        self.hasher = RGBHasher()  # Use the same hasher as database
 
     async def load_model(self, model_path=MODEL_PATH):
         try:
@@ -73,57 +71,109 @@ class CardScanner:
         rect[1] = pts[np.argmin(diff)]
         rect[3] = pts[np.argmax(diff)]
         return rect
-    def _phash(self, image: Image.Image) -> int:
-        try:
 
-            image_gray = image.convert('L').resize((8, 8), Image.LANCZOS)
-            # Calculate average hash
-            hash_value = imagehash.average_hash(image_gray)
-            return int(str(hash_value), 16)
-        except Exception as e:
-            print(f"Error generating phash: {e}")
-            return 0
+    def _generate_phash(self, image: Image.Image) -> bytes:
+        """Generate 8-byte PHash using OpenCV"""
+        img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+        resized = cv2.resize(gray, (32, 32))
+        
+        dct = cv2.dct(np.float32(resized))
+        dct_roi = dct[:8, :8]
+        
+        median = np.median(dct_roi)
+        hash_bits = (dct_roi > median).flatten()
+        
+        hash_bytes = bytearray()
+        for i in range(0, len(hash_bits), 8):
+            byte_val = 0
+            for j in range(8):
+                if i + j < len(hash_bits) and hash_bits[i + j]:
+                    byte_val |= (1 << (7 - j))
+            hash_bytes.append(byte_val)
+        
+        return bytes(hash_bytes)
+
+    def _generate_block_mean_hash(self, image: Image.Image) -> bytes:
+        """Generate 32-byte Block Mean Hash using OpenCV"""
+        img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+        
+        resized = cv2.resize(gray, (16, 16))  # 256 blocks total
+        blocks = []
+        
+        for i in range(16):
+            for j in range(16):
+                block_mean = resized[i, j]
+                blocks.append(block_mean)
+        
+        hash_bytes = bytearray()
+        for i in range(0, len(blocks), 8):
+            byte_val = 0
+            for j in range(8):
+                if i + j < len(blocks):
+                    bit_val = 1 if blocks[i + j] > np.mean(blocks) else 0
+                    byte_val |= (bit_val << (7 - j))
+            hash_bytes.append(byte_val)
+        
+        return bytes(hash_bytes)
+
+    def _generate_warr_hildreth_hash(self, image: Image.Image) -> bytes:
+        """Generate 72-byte Warr-Hildreth style hash using OpenCV"""
+        img_cv = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+        
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        laplacian = cv2.Laplacian(blurred, cv2.CV_64F)
+        
+        resized = cv2.resize(laplacian, (24, 24))  # 576 pixels = 72 bytes
+        
+        hash_bytes = bytearray()
+        flat_laplacian = resized.flatten()
+        
+        for i in range(0, len(flat_laplacian), 8):
+            byte_val = 0
+            for j in range(8):
+                if i + j < len(flat_laplacian):
+                    bit_val = 1 if flat_laplacian[i + j] > 0 else 0
+                    byte_val |= (bit_val << (7 - j))
+            hash_bytes.append(byte_val)
+        
+        return bytes(hash_bytes)
+
+    def _generate_combined_hash(self, image: Image.Image) -> int:
+        """Generate combined 112-byte (896-bit) hash from all three algorithms"""
+        phash = self._generate_phash(image)           # 8 bytes
+        block_hash = self._generate_block_mean_hash(image)  # 32 bytes
+        warr_hash = self._generate_warr_hildreth_hash(image)  # 72 bytes
+        
+        combined_bytes = phash + block_hash + warr_hash  # 112 bytes total
+        
+        combined_int = 0
+        for byte in combined_bytes:
+            combined_int = (combined_int << 8) | byte
+        
+        return combined_int
 
     def _to_bigints(self, input_hash: int) -> List[int]:
+        """Split 896-bit hash into 14 × 64-bit integers"""
         bigints = []
         mask_64bit = (1 << 64) - 1 
         
-        if input_hash == 0:
-            return [0]
-        
-        temp_hash = input_hash
-        while temp_hash > 0:
-            chunk = temp_hash & mask_64bit
+        for i in range(14):
+            chunk = (input_hash >> (64 * (13 - i))) & mask_64bit
             bigints.append(chunk)
-            temp_hash >>= 64
         
         return bigints
 
-    def _phash_rgb(self, image: Image.Image) -> int:
-        image_resized = image.resize((16, 16), Image.LANCZOS)
-        
-        img_array = np.array(image_resized)
-
-        r_hash = imagehash.average_hash(Image.fromarray(img_array[:,:,0]), hash_size=8)
-        g_hash = imagehash.average_hash(Image.fromarray(img_array[:,:,1]), hash_size=8)  
-        b_hash = imagehash.average_hash(Image.fromarray(img_array[:,:,2]), hash_size=8)
-
-        r_int = int(str(r_hash), 16)
-        g_int = int(str(g_hash), 16)
-        b_int = int(str(b_hash), 16)
-        
-        combined_hash = (r_int << 128) | (g_int << 64) | b_int
-        
-        return combined_hash
-    
     async def scan_cards(self, image: Image.Image) -> List[Card]:
         ret = []
         points = await self._detect_cards(image)
         
         for corner_points in points:
             card = self._crop_card(image, corner_points)
-            card.hash = self.hasher.generate_phash_rgb(card.image)
-            card.hash_bigints = self.hasher.to_bigints(card.hash)  # Use as many columns as needed
+            card.hash = self._generate_combined_hash(card.image)
+            card.hash_bigints = self._to_bigints(card.hash)
             ret.append(card)
             
         return ret
