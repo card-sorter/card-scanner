@@ -1,24 +1,20 @@
 import asyncio
 from typing import List
 
+from PIL import Image
+from hamming_matcher import HammingMatcher
+
 import aiosqlite
 from git import Repo, Remote, InvalidGitRepositoryError
 import os
 import aiohttp
 import csv
-from io import StringIO
+from io import StringIO, BytesIO
 import aiofiles
 import json
 
 from common import Card
 from config import DATABASE, GAME_CATEGORY, HASH_PATH, HASH_REPOSITORY
-
-
-def hamming_distance(a0, a1, a2, a3, b0, b1, b2, b3):
-    return (bin(a0 ^ b0).count('1') +
-            bin(a1 ^ b1).count('1') +
-            bin(a2 ^ b2).count('1') +
-            bin(a3 ^ b3).count('1'))
 
 class DBInterface:
     def __init__(self):
@@ -35,9 +31,7 @@ class DBInterface:
         """
         try: 
             self.db = await aiosqlite.connect(path)
-            await self.db.create_function('HAMMINGDISTANCE', 8, hamming_distance)
-
-            print("Connected to database: {path}")
+            print(f"Connected to database: {path}")
             return True
         
         except Exception as e: 
@@ -84,9 +78,9 @@ class DBInterface:
         Initialize the database
         """
         try:
-            statement = 'CREATE TABLE IF NOT EXISTS hashes (\ncardID INTEGER PRIMARY KEY'
+            statement = 'CREATE TABLE IF NOT EXISTS hashes (\nCard_ID INTEGER PRIMARY KEY'
             for i in range(1,15):
-                statement = statement + f",\nbigint{i} BIGINT DEFAULT 0"
+                statement = statement + f",\nBigint{i} BIGINT DEFAULT 0"
             statement = statement + "\n);"
             print(statement)
             await self._execute(statement)
@@ -224,7 +218,7 @@ class DBInterface:
 
     async def _fetch_category(self, category: int = GAME_CATEGORY) -> bool:
         """
-        Download the CSV files from tcgcsv for a category.
+        Download the CSV files from TCGCSV for a category.
         """
         try:
             url = f"https://tcgcsv.com/tcgplayer/{category}/Groups.csv"
@@ -405,20 +399,20 @@ class DBInterface:
             print(f"Failed to load hashes: {e}")
             return False
 
-    async def update(self)->bool:
+    async def update(self) -> bool:
+        """
+        Update database with latest category and product data.
+        """
         try:
-            success = await self._fetch_category()
-            if not success:
-                print("Failed to fetch categories new data")
-                return False
+            cat_ok = await self._fetch_category()
+            prod_ok = await self._fetch_products()
 
-            success = await self._fetch_products()
-            if not success:
-                print("Failed to fetch products new data")
+            if cat_ok and prod_ok:
+                print("Database updated successfully.")
+                return True
+            else:
+                print("Some update steps failed.")
                 return False
-
-            print("Successfully updated")
-            return True
 
         except Exception as e:
             print(f"Failed to update: {e}")
@@ -460,7 +454,8 @@ class DBInterface:
             return False
 
     async def find_cards(self, compare: Card) -> List[Card]:
-        '''CREATE FUNCTION HAMMINGDISTANCE(
+        """
+        CREATE FUNCTION HAMMINGDISTANCE(
           A0 BIGINT, A1 BIGINT, A2 BIGINT, A3 BIGINT,
           B0 BIGINT, B1 BIGINT, B2 BIGINT, B3 BIGINT
         )
@@ -469,8 +464,89 @@ class DBInterface:
           BIT_COUNT(A0 ^ B0) +
           BIT_COUNT(A1 ^ B1) +
           BIT_COUNT(A2 ^ B2) +
-          BIT_COUNT(A3 ^ B3);'''
-        pass
+          BIT_COUNT(A3 ^ B3);
+        Use hamming distance matcher to find the 3 closest cards
+        """
+        if not self.connected:
+            raise Exception("Failed to connect to database")
+
+        # Create and load matcher if not yet done
+        matcher = HammingMatcher()
+        await matcher.load_from_db(DATABASE["path"], "hashes")
+
+        # Build query hash from compare Card's hash_bigints
+        if not compare.hash_bigints:
+            raise ValueError("Card object must have hash_bigints populated")
+
+        # Use the hash_bigints list directly
+        query_hash = tuple(compare.hash_bigints)
+
+        # If hash_bigints has fewer elements than available columns, pad with zeros
+        if len(query_hash) < matcher.num_parts:
+            query_hash = query_hash + (0,) * (matcher.num_parts - len(query_hash))
+        elif len(query_hash) > matcher.num_parts:
+            query_hash = query_hash[:matcher.num_parts]
+
+        print(f"Querying with {len(query_hash)} hash parts out of {matcher.num_parts} available")
+
+        # Find top 3 matches
+        matches = matcher.find_top_3(query_hash)
+
+        cards: List[Card] = []
+
+        async with aiohttp.ClientSession() as session:
+            for card_id, distance in matches:
+                cursor = await self.db.execute(
+                    "SELECT productId, name, imageUrl FROM cards WHERE productId = ?",
+                    (card_id,)
+                )
+                row = await cursor.fetchone()
+                await cursor.close()
+
+                if not row:
+                    print(f"Card ID {card_id} not found in cards table")
+                    continue
+
+                product_id, name, image_url = row
+                print(f"ID: {card_id}, Distance: {distance}, Name: {name}")
+
+                image = None
+                try:
+                    async with session.get(image_url) as resp:
+                        if resp.status == 200:
+                            image_bytes = await resp.read()
+                            image = Image.open(BytesIO(image_bytes))
+                except Exception as e:
+                    print(f"Failed to fetch image for card {product_id}: {e}")
+
+                # Create Card object
+                card = Card(image=image)
+                card.values = {
+                    "productId": product_id,
+                    "name": name,
+                    "imageUrl": image_url
+                }
+                card.distance = distance
+                cards.append(card)
+
+        return cards
+
+    async def initialize(self):
+        """
+        Public setup function to initialize database and hash data
+        """
+        try:
+            success = await self.setup()
+            if not success:
+                print("Database setup failed.")
+            else:
+                print("Database setup complete.")
+            return success
+        except Exception as e:
+            print(f"Initialization error: {e}")
+            return False
+
+
 
 async def main():
     db = DBInterface()

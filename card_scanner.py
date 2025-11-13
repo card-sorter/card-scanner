@@ -15,7 +15,7 @@ class CardScanner:
     async def load_model(self, model_path=MODEL_PATH):
         try:
             self.model = YOLO(model_path)
-            print(f"Model loadsucceed from {model_path}")
+            print(f"Model load succeed from {model_path}")
         except Exception as e:
             print(f"Err loading model: {e}")
             raise
