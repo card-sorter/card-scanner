@@ -9,3 +9,5 @@ uvicorn==0.31.1
 opencv-python==4.10.0.84
 ultralytics==8.3.7
 aiofiles==25.1.0
+python-multipart
+aioschedule

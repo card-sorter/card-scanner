@@ -1,41 +1,56 @@
 from db_interface import DBInterface
-from config import DATABASE, UPDATE_HOUR, UPDATE_MINUTE
+from config import UPDATE_HOUR, UPDATE_MINUTE
 import asyncio
-import aioschedule as schedule
-from datetime import datetime
+from datetime import datetime, timedelta
 
-async def daily_task(db: DBInterface = None): #daily maintainence/ updates
+async def daily_task(db: DBInterface = None):
+    """
+    Daily maintenance task to update the database.
+    """
     print(f"Starting update task at {datetime.now()}")
     
+    should_close = False
     if db is None:
         db = DBInterface()
-        await db.open(DATABASE)
+        should_close = True
     
     try:
-        print("Fetching latest card data...") # Update card data from TCGCSV
-        await db._update_category()
+        # initialize() handles connection, table creation, repo cloning, and data updates
+        success = await db.initialize()
         
-        print("Updating hash repository...") # Update hash repository
-        await db._download_hashes()
-        await db._load_hashes()
-        
-        print("Daily update completed successfully")
+        if success:
+            print("Daily update completed successfully")
+        else:
+            print("Daily update failed")
         
     except Exception as e:
-        print(f"Update failed: {e}")
+        print(f"Update failed with exception: {e}")
     
     finally:
-        if db.connected:
+        if should_close and db.connected:
             await db.close()
 
-async def scheduler(): # Schedule daily update
-    schedule.every().day.at(f"{UPDATE_HOUR:02d}:{UPDATE_MINUTE:02d}").do(
-        lambda: asyncio.create_task(daily_task())
-    )
-    
+async def scheduler(db: DBInterface = None):
+    """
+    Schedules the daily task to run at the configured time.
+    Waits without polling.
+    """
     while True:
-        await schedule.run_pending()
-        await asyncio.sleep(60)  # Check every minute
+        now = datetime.now()
+        target = now.replace(hour=UPDATE_HOUR, minute=UPDATE_MINUTE, second=0, microsecond=0)
+        
+        # If target time has passed for today, schedule for tomorrow
+        if target <= now:
+            target += timedelta(days=1)
+            
+        wait_seconds = (target - now).total_seconds()
+        print(f"Scheduler sleeping for {wait_seconds:.2f} seconds until {target}")
+        
+        await asyncio.sleep(wait_seconds)
+        
+        # Run the task
+        await daily_task(db)
 
-async def run_scheduled_tasks():
-    await scheduler()
+
+def run_scheduled_tasks(db: DBInterface = None):
+    asyncio.create_task(scheduler(db))

@@ -7,7 +7,7 @@ from card_scanner import CardScanner
 from db_interface import DBInterface
 from config import DATABASE, MODEL_PATH, PORT, HOSTNAME
 from PIL import Image
-
+from tasks import run_scheduled_tasks
 scanner = CardScanner()
 db_interface = DBInterface()
 
@@ -17,6 +17,8 @@ async def lifespan(app: FastAPI):
     print("Starting up")
     await scanner.load_model()  
     await db_interface.open()
+    await db_interface.initialize()
+    run_scheduled_tasks() #passing the db interface can cause race conditions
     print("startup complete")
     yield
     # shutdown
