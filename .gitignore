@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# JetBrains
+.idea/
+
+# Database
+*.db
+database.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Nix
+.direnv/
+result
+
+# Data
+categories/
+hashes/
