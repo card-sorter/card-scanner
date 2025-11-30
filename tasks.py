@@ -13,10 +13,10 @@ async def daily_task(db: DBInterface = None): #daily maintainence/ updates
     
     try:
         print("Fetching latest card data...") # Update card data from TCGCSV
-        await db._fetch_category()
+        await db._update_category()
         
         print("Updating hash repository...") # Update hash repository
-        await db._fetch_hashes()
+        await db._download_hashes()
         await db._load_hashes()
         
         print("Daily update completed successfully")

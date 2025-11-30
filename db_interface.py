@@ -5,7 +5,7 @@ from PIL import Image
 from hamming_matcher import HammingMatcher
 
 import aiosqlite
-from git import Repo, Remote, InvalidGitRepositoryError
+from git import Repo, InvalidGitRepositoryError
 import os
 import aiohttp
 import csv
@@ -17,18 +17,49 @@ from common import Card
 from config import DATABASE, GAME_CATEGORY, HASH_PATH, HASH_REPOSITORY
 
 class DBInterface:
-    def __init__(self):
+    """
+    Manages interactions with the SQLite database, including data synchronization
+    from external sources and image-based card search using Hamming distance.
+    """
+    def __init__(
+            self,
+            database_info = DATABASE,
+            hash_repository = HASH_REPOSITORY,
+            hash_path = HASH_PATH,
+            game_category = GAME_CATEGORY
+    ):
+        """
+        Initialize the DBInterface.
+
+        Args:
+            database_info (dict): Configuration for the database, including the path.
+            hash_repository (str): URL of the git repository containing image hashes.
+            hash_path (str): Local path to clone/store the hash repository.
+            game_category (int): The TCGPlayer category ID for the game (e.g., Pokemon).
+        """
         self.db = None
+        self.hamming_matcher = HammingMatcher()
+        self.hash_path = hash_path
+        self.hash_repository = hash_repository
+        self.database_info = database_info
+        self.game_category = game_category
 
     @property
     def connected(self):
         return bool(self.db)
 
-    async def open(self, path: str = DATABASE["path"])->bool:
+    async def open(self, path: str|None = None)->bool:
         """
-        Connect to the database.
-        :return:
+        Connect to the SQLite database.
+
+        Args:
+            path (str | None): Path to the database file. If None, uses the path from self.database_info.
+
+        Returns:
+            bool: True if connection was successful, False otherwise.
         """
+        if path is None:
+            path = self.database_info["path"]
         try: 
             self.db = await aiosqlite.connect(path)
             print(f"Connected to database: {path}")
@@ -42,7 +73,9 @@ class DBInterface:
     async def close(self)->bool:
         """
         Close the database connection.
-        :return:
+
+        Returns:
+            bool: True if disconnection was successful, False otherwise.
         """
         try:    
             await self.db.close()
@@ -56,13 +89,20 @@ class DBInterface:
 
     async def _execute(self, statement: str)-> aiosqlite.Cursor | None:
         """
-        Return a cursor object of the executed statement.
-        Return none if not connected.
-        :param statement:
-        :return:
+        Execute a SQL statement and return the cursor.
+
+        Args:
+            statement (str): The SQL statement to execute.
+
+        Returns:
+            aiosqlite.Cursor | None: The cursor object if successful, None if failed.
+
+        Raises:
+            Exception: If the database is not connected.
         """
         if not self.connected: 
             raise Exception("Database not connected")
+
         
         try: 
             cursor = await self.db.execute(statement)
@@ -73,19 +113,37 @@ class DBInterface:
             print(f"Execute failed: {e}")
             return None
 
-    async def _initialize_table(self, category: int = GAME_CATEGORY) -> bool:
+    async def _initialize_table(self) -> bool:
         """
-        Initialize the database
+        Initialize the database schema.
+
+        Creates the 'hashes', 'groups', and 'products' tables if they do not exist.
+
+        Returns:
+            bool: True if initialization was successful, False otherwise.
         """
         try:
             statement = 'CREATE TABLE IF NOT EXISTS hashes (\nCard_ID INTEGER PRIMARY KEY'
             for i in range(1,15):
                 statement = statement + f",\nBigint{i} BIGINT DEFAULT 0"
-            statement = statement + "\n);"
+            statement = statement + ",\nFOREIGN KEY (Card_ID) REFERENCES products (productId)\n);"
             print(statement)
             await self._execute(statement)
             statement = '''
-            CREATE TABLE IF NOT EXISTS cards (
+            CREATE TABLE IF NOT EXISTS groups (
+                groupId INTEGER NOT NULL PRIMARY KEY,
+                name TEXT,
+                abbreviation TEXT,
+                isSupplemental BOOLEAN,
+                publishedOn DATETIME,
+                modifiedOn DATETIME,
+                categoryId INTEGER
+                );
+            '''
+            print(statement)
+            await self._execute(statement)
+            statement = '''
+            CREATE TABLE IF NOT EXISTS products (
                 productId INTEGER PRIMARY KEY, 
                 name TEXT, 
                 cleanName TEXT, 
@@ -101,21 +159,8 @@ class DBInterface:
                 marketPrice FLOAT, 
                 directLowPrice FLOAT, 
                 subTypeName TEXT, 
-                data TEXT
-                );
-            '''
-            print(statement)
-            await self._execute(statement)
-            statement = '''
-            CREATE TABLE IF NOT EXISTS products (
-                groupId INTEGER,
-                name TEXT,
-                abbreviation TEXT,
-                isSupplemental BOOLEAN,
-                publishedOn DATETIME,
-                modifiedOn DATETIME,
-                categoryId INTEGER,
-                FOREIGN KEY (categoryId) REFERENCES cards (categoryId)
+                data TEXT,
+                FOREIGN KEY (groupId) REFERENCES groups (groupId)
                 );
             '''
             print(statement)
@@ -126,11 +171,16 @@ class DBInterface:
             print(f"Failed to initialize table: {e}")
             return False
 
-    async def _fetch_csv(self, url: str, path: str) -> bool:
+    async def _download_csv(self, url: str, path: str) -> bool:
         """
-        Download the CSV files from tcgcsv Groups file
-        and save it in the corresponding path
-        :return:
+        Download a CSV file from a URL and save it to a local path.
+
+        Args:
+            url (str): The URL to download from.
+            path (str): The local file path to save the CSV.
+
+        Returns:
+            bool: True if download and save were successful, False otherwise.
         """
         try: 
             async with aiohttp.ClientSession() as session:
@@ -144,7 +194,7 @@ class DBInterface:
                         async with aiofiles.open(path, 'w', encoding='utf-8') as file:
                             await file.write(csv_text) #Raw data
 
-                        print(f"CSV successfully saved to: {path}")
+                        #print(f"CSV successfully saved to: {path}")
                         return True
                     else: 
                         print(f"Failed to fetch CSV: HTTP {response.status}")
@@ -155,6 +205,16 @@ class DBInterface:
             return False
         
     async def _read_file(self, path: str, column_name: str) -> list:
+        """
+        Read a CSV file and extract values from a specific column.
+
+        Args:
+            path (str): Path to the CSV file.
+            column_name (str): The name of the column to extract.
+
+        Returns:
+            list: A list of values from the specified column. Returns empty list on error.
+        """
         try: 
             async with aiofiles.open(path, 'r', encoding='utf-8') as file: 
                 content = await file.read()
@@ -166,10 +226,20 @@ class DBInterface:
             return groups
         
         except Exception as e: 
-            print(f"Error reading groups file: {e}")
+            print(f"Error reading category file: {e}")
             return []
 
     async def _load_data(self, content: str, table_name: str) -> bool:
+        """
+        Load CSV content into a database table.
+
+        Args:
+            content (str): The raw CSV content string.
+            table_name (str): The name of the table to insert data into.
+
+        Returns:
+            bool: True if data was loaded successfully, False otherwise.
+        """
         try:
             lines = content.strip().split('\n')
             if len(lines) < 2:
@@ -193,7 +263,7 @@ class DBInterface:
 
                 await self.db.executemany(sql, data_to_insert)
                 await self.db.commit()
-                print(f"Loaded {len(data_to_insert)} rows into {table_name} table")
+                #print(f"Loaded {len(data_to_insert)} rows into {table_name} table")
                 return True
             else:
                 print(f"No data to load")
@@ -203,12 +273,40 @@ class DBInterface:
             print(f"Failed to load data: {e}")
             return False
 
-    async def _fetch_products(self, category: int = GAME_CATEGORY)->bool:
+    async def _fetch_group_ids(self, category: int | None = None) -> list[int]:
+        """
+        Fetch all group IDs for a given category from the database.
+
+        Args:
+            category (int | None): The category ID.
+
+        Returns:
+            list[int]: A list of group IDs.
+        """
+        statement = "SELECT groupId FROM groups WHERE categoryId = ?;"
+        cur = await self.db.execute(statement, (category,))
+        rows = await cur.fetchall()
+        ret = [r[0] for r in rows]
+        return ret
+
+
+    async def _load_category(self, category: int | None = None)->bool:
+        """
+        Load category information from a local CSV file into the database.
+
+        Args:
+            category (int | None): The category ID. If None, uses self.game_category.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        if category is None:
+            category = self.game_category
         try:
-            async with aiofiles.open(f"./categories/group{category}.csv", 'r', encoding='utf-8') as file:
+            async with aiofiles.open(f"./categories/category{category}.csv", 'r', encoding='utf-8') as file:
                 content = await file.read()
 
-                if await self._load_data(content, "products"):
+                if await self._load_data(content, "groups"):
                     return True
                 else:
                     return False
@@ -216,27 +314,40 @@ class DBInterface:
             print(f"Failed to load products: {e}")
             return False
 
-    async def _fetch_category(self, category: int = GAME_CATEGORY) -> bool:
+    async def _update_category(self, category: int | None = None) -> bool:
         """
-        Download the CSV files from TCGCSV for a category.
+        Download and update category and group data from TCGCSV.
+
+        Downloads the Groups.csv for the category, loads it, then downloads
+        ProductsAndPrices.csv for each group and loads them.
+
+        Args:
+            category (int | None): The category ID. If None, uses self.game_category.
+
+        Returns:
+            bool: True if all updates were successful, False otherwise.
         """
+        if category is None:
+            category = self.game_category
         try:
             url = f"https://tcgcsv.com/tcgplayer/{category}/Groups.csv"
-            path = f"./categories/group{category}.csv"
-            success = await self._fetch_csv(url, path)
+            path = f"./categories/category{category}.csv"
+            success = await self._download_csv(url, path)
             if not success:
-                print(f"No Group CSV file fetched")
+                print(f"No Category CSV file downloaded")
                 return False
 
-            group_ids = await self._read_file(path, column_name="groupId")
+            await self._load_category(category)
+
+            groups = await self._fetch_group_ids(category)
 
             async with asyncio.TaskGroup() as tg:
-                for group_id in group_ids:
+                for group_id in groups:
                     group_url = f"https://tcgcsv.com/tcgplayer/{category}/{group_id}/ProductsAndPrices.csv"
                     group_path = f"./categories/category{category}/{group_id}.csv"
-                    tg.create_task(self._fetch_csv(group_url, group_path))
+                    tg.create_task(self._download_csv(group_url, group_path))
 
-            success = await self._load_card_csv(path)
+            success = await self._load_groups(path)
             return success
 
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
@@ -251,12 +362,21 @@ class DBInterface:
             print(f"Failed to fetch category {category}: {e}")
             return False
 
-    async def _load_card_csv(self, path: str, category: int = GAME_CATEGORY) -> bool:
+    async def _load_groups(self, path: str, category: int | None = None) -> bool:
         """
-        Load multiple group CSV files into the database
+        Load product data from downloaded group CSV files into the database.
+
+        Args:
+            path (str): Path to the category CSV file (unused but kept for signature compatibility).
+            category (int | None): The category ID. If None, uses self.game_category.
+
+        Returns:
+            bool: True if successful, False otherwise.
         """
+        if category is None:
+            category = self.game_category
         try:
-            group_ids = await self._read_file(path, column_name="groupId")
+            group_ids = await self._fetch_group_ids(category)
             if not group_ids:
                 print("Failed to load groups")
                 return False
@@ -296,9 +416,9 @@ class DBInterface:
                 if insert_data:
                     columns = ", ".join(card_columns + ["data"])
                     placeholders = ", ".join(["?"] * len(card_columns + ["data"]))
-                    sql = f"INSERT OR REPLACE INTO cards ({columns}) VALUES ({placeholders})"
+                    sql = f"INSERT OR REPLACE INTO products ({columns}) VALUES ({placeholders})"
                     await self.db.executemany(sql, insert_data)
-                    print(f"Loaded {len(insert_data)} cards from {group_id}.csv")
+                    #print(f"Loaded {len(insert_data)} products from {group_id}.csv")
                 else:
                     print(f"No valid data in {group_id}.csv")
 
@@ -311,45 +431,38 @@ class DBInterface:
             print(f"Failed to load card CSV files: {e}")
             return False
 
-    async def _initialize_hash_repository(self, path: str = HASH_PATH, repo: str = HASH_REPOSITORY)->bool:
+
+
+    async def _initialize_hash_repository(self)->bool:
         """
-        Clone repository if it does not exist.
-        :param path:
-        :param repo:
-        :return:
+        Clone the image hash repository if it does not exist.
+
+        Returns:
+            bool: True if successful (cloned or already exists), False otherwise.
         """
         try: 
-            if os.path.exists(path):
-                try:
-                    if await self._fetch_hashes(): 
-                        print("Repository is ready to use")
-                        return True
-                    else: 
-                        print("Failed to initialize repository")
-                        return False
-                    
-                except InvalidGitRepositoryError:
-                    print(f"Directory exists but is not a git repo: {path}")
-                    return False
-                
-            else:        
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                Repo.clone_from(repo, path)
-                print(f"Successfully cloned repository to: {path}")
+            if not os.path.exists(os.path.join(self.hash_path, ".git")):
+                os.makedirs(os.path.dirname(self.hash_path), exist_ok=True)
+                Repo.clone_from(self.hash_repository, self.hash_path)
+                print(f"Successfully cloned repository to: {self.hash_path}")
+                return True
+            else:
+                print(f"Repository already cloned to: {self.hash_path}")
                 return True
         
         except Exception as e: 
             print(f"Failed to clone repository: {e}")
             return False
 
-    async def _fetch_hashes(self, path: str = HASH_PATH)->bool:
+    async def _download_hashes(self)->bool:
         """
-        Pull from remote
-        :param path:
-        :return:
+        Pull the latest changes from the hash repository.
+
+        Returns:
+            bool: True if successful, False otherwise.
         """
         try:
-            git_repo = Repo(path)
+            git_repo = Repo(self.hash_path)
             origin = git_repo.remote(name='origin')
             origin.fetch()
             current_branch = git_repo.active_branch.name
@@ -365,16 +478,19 @@ class DBInterface:
             return True
 
         except InvalidGitRepositoryError:
-            print(f"Directory exists but is not a git repo: {path}")
+            print(f"Directory exists but is not a git repo: {self.hash_path}")
             return False
 
         except Exception as e:
             print(f"Failed fetching hashes: {e}")
             return False
 
-    async def _load_hashes(self, path: str = HASH_PATH) -> bool:
+    async def _load_hashes(self) -> bool:
         """
-        Load hashes into the database table
+        Load image hashes from the CSV file in the repository into the database.
+
+        Returns:
+            bool: True if successful, False otherwise.
         """
         try:
             async with aiofiles.open("./hashes/image_hashes.csv", 'r', encoding='utf-8') as file:
@@ -399,15 +515,22 @@ class DBInterface:
             print(f"Failed to load hashes: {e}")
             return False
 
+    async def _update_hashes(self) -> bool:
+        if await self._download_hashes():
+            if await self._load_hashes():
+                await self.hamming_matcher.load_from_db(DATABASE["path"], "hashes")
+                return True
+        return False
+
     async def update(self) -> bool:
         """
         Update database with latest category and product data.
         """
         try:
-            cat_ok = await self._fetch_category()
-            prod_ok = await self._fetch_products()
+            cat_ok = await self._update_category(self.game_category)
+            hash_ok = await self._update_hashes()
 
-            if cat_ok and prod_ok:
+            if cat_ok and hash_ok:
                 print("Database updated successfully.")
                 return True
             else:
@@ -431,19 +554,14 @@ class DBInterface:
                 print("Failed to initialize table")
                 return False
 
-            updated = await self.update()
-            if not updated:
-                print("Failed to update table")
-                return False
-
             hash_repo = await self._initialize_hash_repository()
             if not hash_repo:
                 print("Failed to initialize repository")
                 return False
 
-            hash_loaded = await self._load_hashes()
-            if not hash_loaded:
-                print("Failed to load hashes")
+            updated = await self.update()
+            if not updated:
+                print("Failed to update table")
                 return False
 
             print("Successfully setup")
@@ -455,24 +573,20 @@ class DBInterface:
 
     async def find_cards(self, compare: Card) -> List[Card]:
         """
-        CREATE FUNCTION HAMMINGDISTANCE(
-          A0 BIGINT, A1 BIGINT, A2 BIGINT, A3 BIGINT,
-          B0 BIGINT, B1 BIGINT, B2 BIGINT, B3 BIGINT
-        )
-        RETURNS INT DETERMINISTIC
-        RETURN
-          BIT_COUNT(A0 ^ B0) +
-          BIT_COUNT(A1 ^ B1) +
-          BIT_COUNT(A2 ^ B2) +
-          BIT_COUNT(A3 ^ B3);
-        Use hamming distance matcher to find the 3 closest cards
+        Find the top 3 closest matching cards using Hamming distance on image hashes.
+
+        Args:
+            compare (Card): The card object containing the hash to compare.
+
+        Returns:
+            List[Card]: A list of the top 3 matching Card objects, populated with details and images.
+
+        Raises:
+            Exception: If database is not connected.
+            ValueError: If the compare card does not have hash_bigints populated.
         """
         if not self.connected:
             raise Exception("Failed to connect to database")
-
-        # Create and load matcher if not yet done
-        matcher = HammingMatcher()
-        await matcher.load_from_db(DATABASE["path"], "hashes")
 
         # Build query hash from compare Card's hash_bigints
         if not compare.hash_bigints:
@@ -482,29 +596,29 @@ class DBInterface:
         query_hash = tuple(compare.hash_bigints)
 
         # If hash_bigints has fewer elements than available columns, pad with zeros
-        if len(query_hash) < matcher.num_parts:
-            query_hash = query_hash + (0,) * (matcher.num_parts - len(query_hash))
-        elif len(query_hash) > matcher.num_parts:
-            query_hash = query_hash[:matcher.num_parts]
+        if len(query_hash) < self.hamming_matcher.num_parts:
+            query_hash = query_hash + (0,) * (self.hamming_matcher.num_parts - len(query_hash))
+        elif len(query_hash) > self.hamming_matcher.num_parts:
+            query_hash = query_hash[:self.hamming_matcher.num_parts]
 
-        print(f"Querying with {len(query_hash)} hash parts out of {matcher.num_parts} available")
+        print(f"Querying with {len(query_hash)} hash parts out of {self.hamming_matcher.num_parts} available")
 
         # Find top 3 matches
-        matches = matcher.find_top_3(query_hash)
+        matches = self.hamming_matcher.find_top_3(query_hash)
 
         cards: List[Card] = []
 
         async with aiohttp.ClientSession() as session:
             for card_id, distance in matches:
                 cursor = await self.db.execute(
-                    "SELECT productId, name, imageUrl FROM cards WHERE productId = ?",
+                    "SELECT productId, name, imageUrl FROM products WHERE productId = ?",
                     (card_id,)
                 )
                 row = await cursor.fetchone()
                 await cursor.close()
 
                 if not row:
-                    print(f"Card ID {card_id} not found in cards table")
+                    print(f"Card ID {card_id} not found in products table")
                     continue
 
                 product_id, name, image_url = row
@@ -533,7 +647,10 @@ class DBInterface:
 
     async def initialize(self):
         """
-        Public setup function to initialize database and hash data
+        Perform full initialization: connect, create tables, clone repo, and update data.
+
+        Returns:
+            bool: True if all steps succeed, False otherwise.
         """
         try:
             success = await self.setup()
@@ -550,7 +667,7 @@ class DBInterface:
 
 async def main():
     db = DBInterface()
-    success = await db.setup()
+    success = await db.initialize()
     if success:
         print("Done")
     await db.close()
