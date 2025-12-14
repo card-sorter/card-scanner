@@ -663,7 +663,31 @@ class DBInterface:
             print(f"Initialization error: {e}")
             return False
 
+    async def get_categories(self):
+        """
+        Get all the unique categoryId from groups table
+        """
+        try:
+            cursor = await self.db.execute("SELECT DISTINCT categoryId FROM groups")
+            rows = await cursor.fetchall()
+            await cursor.close()
+            return rows
+        except Exception as e:
+            print(f"Failed to get categoryId: {e}")
+            return None
 
+    async def get_group_columns(self):
+        """
+        Get all the columns from group table
+        """
+        try: 
+            cursor = await self.db.execute("PRAGMA table_info(groups)")
+            cols = await cursor.fetchall()
+            await cursor.close()
+            return cols
+        except Exception as e:
+            print(f"Failed to get group columns: {e}")
+            return None
 
 async def main():
     db = DBInterface()

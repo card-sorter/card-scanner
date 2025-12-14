@@ -95,23 +95,20 @@ async def get_categories():
         categories = await db_interface.get_categories()
         return {
             "categories": categories,
-            "source": "https://tcgcsv.com/tcgplayer/categories"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching categories: {str(e)}")
 
-@app.get("/columns/{group_id}")
-async def get_group_columns(group_id: int):
+@app.get("/columns/groups")
+async def get_group_columns():
     """Get CSV column headers for a specific game group"""
     try:
-        columns = await db_interface.get_group_columns(group_id)
+        columns = await db_interface.get_group_columns()
         return {
-            "group_id": group_id,
             "columns": columns,
-            "source": f"https://tcgcsv.com/{group_id}/cards"
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching columns for group {group_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching columns for group: {str(e)}")
 
 @app.get("/health")
 async def health_check():
