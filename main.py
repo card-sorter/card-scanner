@@ -90,18 +90,19 @@ async def scan_card(image: UploadFile = File(...)):
 # new endpoints
 @app.get("/categories")
 async def get_categories():
-    """Get available card game categories"""
+    """Get available card game categoryIds"""
     try:
         categories = await db_interface.get_categories()
         return {
             "categories": categories,
+            "source": "https://tcgcsv.com/tcgplayer/categories",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching categories: {str(e)}")
 
 @app.get("/columns/groups")
 async def get_group_columns():
-    """Get CSV column headers for a specific game group"""
+    """Get CSV column headers from the groups table"""
     try:
         columns = await db_interface.get_group_columns()
         return {
